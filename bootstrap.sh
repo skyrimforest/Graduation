@@ -31,6 +31,7 @@ clone_branch SkyEngine                SkyEngine        trae/skycausal-research
 clone_branch SkyEngine-FJSP           SkyEngine-FJSP   trae/skycausal-evolution
 clone_branch SkyEngine-MAPF           SkyEngine-MAPF   trae/skycausal-evolution
 clone_branch SkyEngine-research       sky_research     0901icaps1
+git -C "$PREP/codebase/sky_research" fetch origin 0901llmdiag || true   # 方向7 LLM诊断
 
 # 3. 引擎修复分支（论文三层屏障修复所在）+ 确认实验 worktree
 git -C "$PREP/codebase/SkyEngine" fetch origin 0902dedupe 0901softcommit || true

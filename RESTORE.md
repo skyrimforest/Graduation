@@ -27,7 +27,7 @@ bash bootstrap.sh [目标根目录]     # 默认 ./flex_manufacture
 │       ├── SkyEngine-confirmation-v2-1/   ← 0902dedupe 的 git worktree(可重建)
 │       ├── SkyEngine-FJSP/        ← skyrimforest/SkyEngine-FJSP, 分支 trae/skycausal-evolution (FJSP求解器)
 │       ├── SkyEngine-MAPF/        ← skyrimforest/SkyEngine-MAPF, 分支 trae/skycausal-evolution (MAPF路由器)
-│       └── sky_research/          ← skyrimforest/SkyEngine-research, 分支 0901icaps1 (战役runner/分析/可视化)
+│       └── sky_research/          ← skyrimforest/SkyEngine-research, 分支 0901icaps1 (战役runner/分析/可视化; 另含 0901llmdiag=方向7, 文献库见 literature/7_LLM诊断解释/含manifest)
 ```
 
 ## git 之外的内容（clone 不会得到）
