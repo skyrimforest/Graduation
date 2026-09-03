@@ -1,0 +1,132 @@
+\documentclass[UTF8,12pt,a4paper]{ctexart}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{booktabs}
+\usepackage{geometry}
+\usepackage{hyperref}
+\geometry{margin=2.5cm}
+\newtheorem{definition}{定义}
+\newcommand{\Cmax}{C_{\max}}
+
+\title{名义计划在扰动下退化为多少：FJSP+MAPF 的\\不确定规约、退化度量与鲁棒化策略谱系}
+\author{SkyResearch}
+\date{2026年9月1日 \quad v1 草稿}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+耦合系统的调度层在\emph{名义}时长上规划，执行层却在\emph{扰动}下运行。
+本文（1）给出不确定规约 U-IFJSP-MAPF 与退化度量
+$D=\mathbb{E}_\xi[\Cmax(\pi;\xi)]/\Cmax(\pi;1)$，并定义鲁棒化策略谱系
+（反应式/名义开环/周期重规划/时距填充）；（2）24-episode 试点给出
+反直觉结果：\textbf{名义开环 CP-SAT 计划对 $\pm10\%\sim+60\%$ 的加工
+方差几乎免疫}（$D\in[1.00,1.15]$，计划松弛+按计划释放的被动鲁棒性），
+而\textbf{反应式规则调度退化 $2.3\times$}（每步按已实现扰动重排引发
+分派抖振）——``反应式=鲁棒''的直觉在耦合系统中不成立，静态质量与
+鲁棒性不构成权衡；活性失稳边界则随方差混沌翻转。周期重规划臂因
+承诺机制拒绝修订而与静态不可区分（与方向1/4 的发现闭合为同一机制
+议程）。
+\end{abstract}
+
+\section{引言}
+
+静态与在线规约（姊妹篇）都假设时长确定。真实车间中加工时长有
+方差（刀具磨损、人工装夹），运输时长受拥堵影响。鲁棒 MAPF 文献
+（k-robust、STT-CBS\cite{vanderwedden2020sttcbs}）处理行程扰动但
+不含调度；鲁棒调度的文献含加工方差但不含路由。本篇在耦合语义下
+度量``名义计划有多脆弱''并比较鲁棒化策略。
+
+\section{不确定规约与退化度量}\label{sec:form}
+
+\subsection{扰动模型}
+每个工序开工时采样真实时长
+$\tilde p = p\cdot\xi_o$，$\xi_o\sim\mathrm{Unif}[l,h]$ iid
+（引擎预设 mild $[0.9,1.1]$、moderate $[0.8,1.25]$、
+high $[0.6,1.6]$；名义 $p$ 供调度层）。
+
+\subsection{退化}
+\begin{equation}
+D(\pi;[l,h]) = \frac{\mathbb{E}_{\xi}\bigl[\Cmax(\pi;\xi)\bigr]}
+{\Cmax(\pi; \bar\xi{=}1)},\qquad
+D_{\max}(\pi) = \frac{\max_\xi \Cmax(\pi;\xi)}{\Cmax(\pi;1)}.
+\end{equation}
+$D$ 度量期望退化（均值鲁棒），$D_{\max}$ 度量最坏退化（盒鲁棒）。
+
+\subsection{策略谱系}
+\begin{itemize}
+  \item $\pi_{\mathrm{re}}$（反应式）：greedy 每步用\emph{当前}状态
+    重排——对已实现扰动自适应，无名义计划可退化，$D\approx 1+\epsilon$；
+  \item $\pi_{\mathrm{nom}}$（名义开环）：CP-SAT 一次规划后仅按
+    ready 时刻释放——扰动造成级联等待，$D$ 最大；
+  \item $\pi_{\mathrm{per}(K)}$（周期重规划）：每 $K$ 步承诺一致修订
+    （方向1 编排器 periodic-K），以修订税换取退化抑制；
+  \item $\pi_{\mathrm{pad}(\alpha)}$（填充）：名义时长膨胀
+    $p\to(1{+}\alpha)p$（对偶于 k-robust 的时空缓冲）。
+\end{itemize}
+\textbf{研究问题}：R1 $\pi_{\mathrm{nom}}$ 的 $D$ 随方差等级的增长率；
+R2 周期重规划把 $D$ 压回 1 所需的 $K$（修订税的最优工作点）；
+R3 名义开环在无方差时最优、反应式有静态税——方差阈值 $\sigma^*$
+在何处交叉（静态质量 vs 鲁棒性的权衡边界）。
+
+\section{试点实验}\label{sec:pilot}
+
+$\{$mk01, mk02$\}$ $\times$ 迷宫 $\times$ agv4 $\times$ 方差
+$\in\{$none, mild, moderate, high$\}$ $\times$ 三策略 $=$ 24 episode。
+
+\begin{table}[h]
+\centering
+\begin{tabular}{llrrr}
+\toprule
+实例 & 方差 & greedy+astar & cpsat-static & cpsat-periodic100 \\
+\midrule
+mk01 & none      & 1099 & 408 & 408 \\
+mk01 & mild      & 2517 & 408 & 408 \\
+mk01 & moderate  & 2518 & 414 & 408 \\
+mk01 & high      & 2262 & 468 & \textbf{408} \\
+\midrule
+mk02 & none      & 4096$^\dagger$ & 410 & 410 \\
+mk02 & mild      & 4096$^\dagger$ & 410 & 410 \\
+mk02 & moderate  & 804 & 410 & 410 \\
+mk02 & high      & 4096$^\dagger$ & \textbf{406} & 410 \\
+\bottomrule
+\end{tabular}
+\caption{鲁棒性试点 makespan。$\dagger$：4096 步未完工（活性失稳，
+方差扰动使失稳边界呈混沌翻转——mk02 仅 moderate 完工）。}
+\label{tab:robust}
+\end{table}
+
+\textbf{发现}：
+\begin{enumerate}
+  \item \textbf{R1（反直觉）}：名义开环计划对加工方差\emph{几乎免疫}
+    （$D\in[1.00,1.15]$；mk02 high 甚至 406 $<$ none 410）——计划松弛
+    +``按计划 ready 时刻释放''构成被动鲁棒性，与方向1 的 F1
+    （停机吸收）同机理；
+  \item \textbf{R2}：反应式 greedy 对 $\pm10\%$ 方差退化 $2.3\times$
+    （1099$\to$2517）——每步用\emph{已实现}的扰动时长重排，引发
+    分派抖振（dispatch thrashing）；
+  \item \textbf{R3 交叉点反转}：``反应式=鲁棒''的直觉在耦合系统中
+    \emph{不成立}——方差下两策略的优劣与无方差时\emph{相同}
+    （CP-SAT 系始终占优），静态质量与鲁棒性在此栈上不构成权衡；
+  \item 周期重规划臂与静态不可区分（修订被承诺机制拒绝，方向1 F2
+    的又一次体现）；活锁边界随方差混沌翻转（mk02），活性失稳
+    的脆弱性需要专门治理（方向5）。
+\end{enumerate}
+
+\section{正式实验计划}
+
+方差族扩展（含重尾/相关性）、$K$ 扫描（50/100/200/400）、
+padding $\alpha$ 扫描、旅行时长扰动（与加工扰动解耦归因）、
+3 种子，约 400 episode（含滚动路由开销估计 2--3 小时）。
+[FULL\_RUN\_PLACEHOLDER]
+
+\section{结论}
+
+本篇把耦合系统放进不确定性语义：退化度量 $D/D_{\max}$、
+四策略谱系与三个可检验问题。试点量化``一次成型计划''的脆弱性
+与闭环重规划的修复力。代码见 \texttt{sky\_research} 分支
+\texttt{0901robust}。
+
+\bibliographystyle{plain}
+\bibliography{references_robust}
+
+\end{document}

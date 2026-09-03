@@ -1,0 +1,552 @@
+% ICAPS 2027 submission draft v1 (2026-09-01)
+% NOTE: swap to the official AAAI two-column author kit when the ICAPS-27
+% kit is published; content and lengths are already calibrated for
+% 8 pages + references.
+\documentclass[twocolumn]{article}
+\usepackage[margin=2cm]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\newtheorem{definition}{Definition}
+\newtheorem{proposition}{Proposition}
+\newcommand{\cmax}{C_{\max}}
+
+\title{Breakable Commitments: Unblocking Closed-Loop\\
+Replanning in Coupled Job-Shop Scheduling and Multi-Agent Path Finding}
+\author{Anonymous submission}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Flexible job-shop scheduling (FJSP) and multi-agent path finding (MAPF)
+couple naturally in smart factories: machines process operations while
+AGVs move material over a shared grid. State-of-the-art stacks solve this
+coupled problem \emph{once} and execute open-loop, and a growing line of
+work proposes closed-loop replanning---yet we find that in a full-stack
+implementation, \textbf{every} dynamic plan revision is silently
+unexecutable: the request encoder cannot express successors of
+in-flight commitments, so a single active transport makes a revision
+impossible to activate. We make four contributions.
+(1)~A formal online specification (O-IFJSP-MAPF) of the coupled problem
+with \emph{commitment-consistent revision} semantics that mirrors real
+execution machinery. (2)~An empirical diagnosis on a coupled benchmark:
+one-shot CP-SAT plans are \emph{passively robust} to outages and duration
+variance (4--14\% degradation under a 200-step machine outage), which
+masks the broken revision pathway---until a job stream arrives, where
+throughput collapses by two orders of magnitude.
+(3)~\emph{Soft commitments}: a conservative \emph{commitment
+projection} that maps each in-flight commitment $(\mu,l,r)$ to exact
+resource and source $(\mu,l)$ and a bounded release $\bar r\ge r$
+governed by a single interpretable penalty parameter, with a
+two-level soundness guarantee---execution safety holds
+\emph{unconditionally} under stack release semantics, plan-time validity
+under a bounded-delay assumption. The projection lifts revision
+activation from 53\% to 99\% across 2401 triggered revisions.
+(4)~A 1209-episode factorial evaluation with paired significance tests
+that yields a provocative conclusion: \textbf{event-triggered revision
+loses to doing nothing in every disruption scenario we could
+construct}---one-shot plans absorb 200-step outages within 6\% via
+slack, while conservative revision pays a 25--125\% premium. Under
+streaming arrivals, soft commitments deliver reliability---zero
+revision failures versus $1$--$18$ per cell, guaranteed completion
+versus starvation in the worst legacy cell, and $23$--$31\%$ throughput
+gains on the largest shop---and a snapshot-based \emph{value-aware
+trigger} converts the diagnosis into a working decision policy:
+replanning only $1.3\%$ of the time, it improves on both never-replan
+and always-replan in this regime ($2876$ vs.\ $3018$/$3466$ mean
+makespan, paired tests). Closed-loop factory scheduling needs a
+when-to-replan decision policy, not a better trigger---and a simple
+one already suffices.
+\end{abstract}
+
+\section{Introduction}
+Manufacturing execution increasingly couples two classical problems.
+On the shop floor, \emph{flexible job-shop scheduling} assigns operations
+to eligible machines and sequences them. On the logistics floor,
+\emph{multi-agent path finding} routes AGVs collision-free over a grid.
+The two layers interact through transport: the schedule emits a stream of
+pickup-and-delivery requests whose realized travel times depend on
+congestion the scheduler does not see; conversely, routing decisions
+determine when material becomes available for processing.
+
+Practical systems therefore decompose the problem hierarchically, and the
+most recent integrated frameworks~\cite{li2026framework} plan once and
+repair only the routing layer at execution time---a
+\emph{generate-then-refine} paradigm whose authors themselves list
+closing the loop as future work. Meanwhile, the replanning literature
+(plan repair, execution monitoring, robust execution) offers a rich
+vocabulary~\cite{fox2006plan,domshlak2013satisficing} but rarely meets
+the coupled factory stack, and dynamic-scheduling studies that do model
+machine breakdowns abstract transport away to a fixed time
+matrix~\cite{lu2025dynamic}.
+
+This paper asks a deliberately unglamorous question: \emph{in a realistic
+coupled stack, what does it take to change the plan after execution has
+started?} The answer turns out to be a mechanism-level bottleneck rather
+than a policy-level one:
+
+\begin{itemize}
+\item We formalize the online coupled problem and its
+  \emph{commitment-consistent revision} semantics
+  (\S\ref{sec:formulation}), mirroring the ledger/activation machinery of
+  a real engine (plan revisions, frozen operations, activation checks).
+\item We show empirically that the standard encoding of commitment
+  consistency \emph{categorically blocks} revision: any queued or
+  in-transit predecessor renders the residual problem inexpressible, and
+  activation is vetoed on 47\% of trigger opportunities ($n{=}2401$
+  revisions)---across disruption revision, job arrivals, and periodic
+  refresh (\S\ref{sec:diagnosis}).
+\item We introduce \emph{soft commitments}: a bounded-release encoding
+  with one interpretable penalty parameter, plus exact commitment-machine
+  resolution from queue membership and transport destinations
+  (\S\ref{sec:soft}). The encoding is client-side and opt-in (a
+  $\sim$90-line patch in our implementation) and raises activation from
+  53\% to 99\%.
+\item We instantiate the $(\tau,\kappa)$ recovery-orchestrator policy
+  space on top and evaluate on a 1209-episode benchmark (948-episode
+  main factorial plus six sensitivity phases) spanning instance families,
+  fleet sizes, disruption scenarios, and commitment modes
+  (\S\ref{sec:experiments}).
+\end{itemize}
+
+Our headline findings revise two intuitions. First, \emph{one-shot plans
+are passively robust}: slack plus release-by-plan semantics absorb severe
+disruptions (a 200-step outage degrades makespan by only 4--14\%),
+so the broken revision pathway is invisible until it is
+catastrophic---on the pre-repair stack, streaming arrivals starved
+entirely ($24.4\to0.24$ jobs/ksteps). Second, once revisions are
+unblocked and measured at scale (1209 episodes across seven factorial
+phases, paired tests at $p<10^{-4}$), event-triggered revision
+\emph{loses} to doing nothing in every disruption scenario: the value
+of closed-loop replanning in this stack is reliability under
+arrivals---zero revision failures, guaranteed completion, and
+$23$--$31\%$ throughput gains on larger shops---not disruption
+response.
+
+\section{Related Work}
+\textbf{Coupled scheduling and routing.} Integrated FJSP with transport
+has a long OR tradition; recent surveys catalogue metaheuristic and
+exact approaches~\cite{xin2025fjsppt,dauzere2024fjsp} on classic
+instance families~\cite{brandimarte1993routing}. Learning-based
+dispatching transfers across
+instances~\cite{zhang2020l2d,smit2025gnn}, and the closest coupled
+framework co-optimizes a JSP schedule with PBS routing under a
+one-shot paradigm~\cite{li2026framework}. These evaluations use single
+maps and open-loop execution; revision semantics are not studied.
+
+\textbf{MAPF and lifelong MAPF.} Optimal and bounded-suboptimal search
+(CBS~\cite{sharon2015cbs}, EECBS~\cite{li2021eecbs}), scalable
+suboptimal search (LaCAM~\cite{okumura2023lacam}), and learned policies
+(MAPF-GPT~\cite{andreychuk2025mapfgpt}) are benchmarked on standardized
+grid suites~\cite{skrynnik2024pogema}; lifelong variants handle task
+streams with rolling horizons~\cite{ma2017mapd,li2021rhcr} and repair
+operators~\cite{li2022lns2}. Robust MAPF treats stochastic
+travel~\cite{vanderwedden2020sttcbs}. None of these model
+machine eligibility, processing durations, or plan-level commitments.
+
+\textbf{Replanning and plan repair.} Plan stability, repair, and
+execution monitoring are classical concerns~\cite{fox2006plan}, with
+commitment-based satisficing planning studying what to
+fix~\cite{domshlak2013satisficing}. Our contribution is orthogonal and
+practical: we show where a production-grade coupled stack silently
+\emph{forbids} repair---the commitment encoding itself---and give the
+minimal sound relaxation that unblocks it, turning the
+stability--responsiveness trade-off into a single measurable penalty
+parameter.
+
+\section{Online Coupled Problem and Revision Semantics}
+\label{sec:formulation}
+\subsection{Static core (I-FJSP-MAPF)}
+Jobs $\mathcal{J}$ carry operation chains $O_j$; each operation $o$ has
+eligible machines $E(o)$ with durations $p_{o,m}$; machines occupy cells
+of a grid $G$; a fleet $\mathcal{K}$ of unit-capacity AGVs moves one edge
+per step. A solution assigns (i) machines and sequences, (ii) transport
+tasks to AGVs, and (iii) collision-free spacetime trajectories
+$\pi_k$, minimizing makespan $\cmax$. The coupling constraints are the
+hand-offs: an operation may start only after its predecessor's material
+\emph{actually arrives}---a time determined by the routing layer.
+
+\subsection{Online setting (O-IFJSP-MAPF)}
+An exogenous disruption process $\xi$ emits machine outages
+$\texttt{m\_down}(m,d)$, AGV outages, and temporary obstacles; a job
+stream releases jobs at times $a_j$. A closed-loop policy observes the
+state (remaining operations, machine/AGV status, in-flight tasks, current
+plan) and may, at any step, issue a \emph{revision}.
+
+\begin{definition}[Feasible revision]
+A revision $\Pi_{t+1}=\rho(\Pi_t\mid s_t)$ is feasible iff it
+(i)~agrees with the executed prefix; (ii)~honors \emph{commitments}
+---started operations stay on their machines, loaded AGVs deliver to
+their destinations; and (iii)~is (approximately) optimal for the residual
+problem.
+\end{definition}
+
+\begin{definition}[Disruption regret]
+$\mathrm{RRegret}(\pi;S)=\cmax(\pi,S)/\cmax(\pi,S_0)$ for scenario $S$
+against the empty scenario $S_0$.
+\end{definition}
+
+\subsection{Commitment classes}
+At any instant each operation is in one of:
+\textsc{completed}, \textsc{processing} (machine busy),
+\textsc{machine\_queue} (queued at a machine), \textsc{transport}
+(material on an AGV), or \textsc{pending} (free to schedule).
+Only \textsc{pending} operations are reschedulable; the rest are frozen.
+The revision machinery must therefore encode, for the first reschedulable
+operation of each job, \emph{when its input material exists} (release
+bound) and \emph{where} (source cell). This seemingly clerical encoding
+is the paper's protagonist.
+
+\section{Diagnosis: Commitments Block Revision}
+\label{sec:diagnosis}
+State-of-the-art coupled frameworks plan once and repair only the
+routing layer, listing closed-loop revision as future
+work~\cite{li2026framework}. We argue this is no accident but a
+consequence of how such stacks naturally honor commitments. The
+baseline---and, we contend, the standard---encoding of commitment
+consistency in a stack that revises through a residual problem is
+\emph{encode-or-veto}: express exactly what is expressible, and veto
+the revision otherwise. It is a defensible design: it can never violate
+a commitment. We instrument a full-stack implementation of this
+baseline pattern and show what it costs. The residual-problem encoder
+works as follows for a job's first reschedulable operation $o$ with
+predecessor $p$:
+\begin{itemize}
+\item $p\in$\textsc{processing}: release $:=$ machine availability
+(handled);
+\item $p\in$\{\textsc{machine\_queue}, \textsc{transport}\}: the encoder
+\emph{cannot express} the release or source; it appends $p$ (or $o$) to
+an \texttt{unresolved} list, and the artifact is marked
+\texttt{execution\_ready=False} iff that list is nonempty;
+\item the solver then \emph{refuses to activate} any such revision.
+\end{itemize}
+
+Since a running factory almost always has queued or in-transit work,
+\textbf{revision activation fails categorically}. In our pilots this
+single pathway failure explained three seemingly unrelated phenomena:
+disruption-triggered revision, job-arrival revision (starving all late
+arrivals: throughput 24.4$\to$0.24 jobs/ksteps), and periodic refresh.
+Simultaneously, one-shot plans looked deceptively healthy---slack absorbs
+outages (4--14\% makespan growth under a 200-step outage) and duration
+variance ($D\in[1.00,1.15]$)---so nothing forced anyone down the
+revision path. We consider this a cautionary tale for evaluating
+closed-loop machinery \emph{only} under weak disruptions.
+
+\section{Soft Commitments as Conservative Projection}
+\label{sec:soft}
+
+\subsection{Commitment projection}
+The repair is best understood not as a patch but as an abstraction.
+An \emph{execution commitment} for a frozen operation $p$ is the triple
+$\kappa(p)=(\mu,\,l,\,r)$: the committed resource $\mu$ (the machine
+where $p$ will run, hence where its successor's input material will
+land), the material source $l$ (that machine's cell), and the
+earliest-safe-release $r$ (the earliest step at which the successor of
+$p$ may begin). A \emph{commitment projection}
+$\Pi$ maps the execution state to the residual problem instance by
+turning each commitment into (i)~a release bound $\bar r\ge r$ for the
+successor, (ii)~a source $\bar l$ for its transfer request, and
+(iii)~machine-availability offsets.
+
+Two projections are of interest. An \emph{exact} projection achieves
+$\bar r=r$ and $\bar l=l$; a \emph{conservative} projection requires only
+$\bar r\ge r$ with $\bar l=l$ exact. The legacy encoder is an
+\emph{all-or-nothing} projection: any commitment whose $(\mu,l)$ it
+cannot derive exactly is excluded from the encoding and vetoes
+activation outright. Soft commitments complete the projection:
+
+\paragraph{Exact $(\mu,l)$ resolution.}
+Operation objects lack an assigned machine before processing starts,
+but the information exists elsewhere: a \textsc{machine\_queue}
+operation sits in exactly one machine's input queue; a
+\textsc{transport} operation's delivery destination is on its transport
+record. Matching destinations to machine cells resolves $(\mu,l)$
+exactly, so only $r$ need be bounded.
+
+\paragraph{Bounded releases.}
+For predecessor $p$ committed to machine $m=\mu(p)$, the successor's
+release bound is
+\begin{align}
+p\in\textsc{machine\_queue}:\quad
+\bar r(o) &\ge \mathrm{avail}(m) + p_m, \label{eq:queue}\\
+p\in\textsc{transport}:\quad
+\bar r(o) &\ge \Delta_{\mathrm{pen}} + p_m, \label{eq:transport}
+\end{align}
+where $p_m$ is $p$'s duration on $m$ (max over alternatives if
+unassigned), $\mathrm{avail}(m)$ accounts for repair time and the
+current operation, and $\Delta_{\mathrm{pen}}$ is the single
+\emph{penalty parameter}---a generous travel allowance (default 200
+steps for maps up to $32{\times}32$). Bound~\eqref{eq:queue} is exact
+when $p$ is next in its FIFO queue and a relaxation otherwise
+(work ahead of $p$ is not yet included; \S\ref{sec:sound} shows why the
+slack is safe); bound~\eqref{eq:transport} is conservative under
+Assumption~A1 below. Material sources use the exactly resolved machine;
+client-only configuration keys are stripped from the service payload.
+
+\subsection{Soundness}
+\label{sec:sound}
+We separate two guarantees. Let the \emph{stack release semantics} be:
+\textbf{S1}~release times gate the dispatch of transport requests only;
+\textbf{S2}~an AGV's pickup physically blocks at the source until the
+material exists; \textbf{S3}~a machine starts an operation only when it
+has entered its input queue, which happens only on delivery.
+
+\begin{proposition}[Execution soundness, unconditional]
+\label{prop:exec}
+Under S1--S3, every conservative projection preserves material
+precedence at execution: no operation starts before its predecessor's
+material is delivered, for \emph{any} $\bar r\ge 0$ (in particular, for
+any $\Delta_{\mathrm{pen}}$).
+\end{proposition}
+\begin{proof}[Proof sketch]
+By S1 an under-estimated $\bar r$ can only dispatch a transfer early;
+by S2 that transfer waits at its source until the predecessor
+completes; by S3 processing cannot begin before delivery. The failure
+mode of a too-small bound is an idle AGV camping at a source
+(congestion, under-utilization), never a premature start.
+\end{proof}
+
+Proposition~\ref{prop:exec} is what makes the penalty knob safe to
+sweep: mis-setting $\Delta_{\mathrm{pen}}$ degrades performance, never
+correctness. The second guarantee is about the plan, not the execution:
+
+\begin{proposition}[Plan-time validity, conditional]
+\label{prop:plan}
+Assume \textbf{A1} (remaining transport time of any committed transfer
+$\le\Delta_{\mathrm{pen}}$) and FIFO input queues. Then
+$\bar r(o)\ge r(o)$ for all successors, so every start time in the
+revised plan is a feasible lower bound: the plan executes without
+release-induced stalling beyond the bounds' slack.
+\end{proposition}
+
+Under A1 violation (extreme congestion), behavior falls back to
+Proposition~\ref{prop:exec}: the plan goes stale but execution stays
+safe---a two-level guarantee we exploit when sweeping
+$\Delta_{\mathrm{pen}}$ down to 10 steps (\S\ref{sec:experiments}).
+
+\paragraph{Implementation.}
+The abstraction instantiates in $\sim$90 lines of client-side encoder
+changes in our stack, opt-in via a solver-config flag, leaving legacy
+behavior bit-identical. The abstraction itself is stack-independent:
+any dispatch-by-release simulator with physically enforced material
+precedence (S1--S3) admits the same construction.
+
+\section{Recovery Orchestrator}
+On top of unblocked revisions we instantiate the policy space
+$\mathcal{O}(\tau,\kappa)$: trigger
+$\tau\in\{\texttt{never},\texttt{event},\texttt{periodic-}K,
+\texttt{myopic}\}$ and scope
+$\kappa\in\{\texttt{full},\texttt{partial}\}$ (scoped repair around a
+failed machine), with an escalation ladder (full$\to$partial$\to$defer)
+and a minimum replan interval. Policies serving as treatments:
+\textsc{greedy-reactive} (rule-based, replans by construction),
+\textsc{static} (one-shot CP-SAT, $\tau{=}$never), \textsc{full},
+\textsc{partial}, and \textsc{myopic}---a value-aware trigger that, at
+each qualifying event, exploits the engine's deterministic
+snapshot/replay to roll out both branches for $H$ steps under identical
+exogenous events and replans only if
+$\hat V(s)=\mathrm{prog}_B-\mathrm{prog}_A>\lambda$, where progress is
+completed operations (ties broken by accumulated processing time). This
+is the simplest instantiation of the when-to-replan decision policy our
+results call for; it requires no learning. One caveat: replay restores
+the world RNG, so under stochastic scenarios ($S_3$) the rollouts see
+the actual future tape---a mild clairvoyance in that arm; under
+deterministic scenarios ($S_0,S_1,S_4$) the rollouts are leak-free by
+construction, and E7 headline comparisons hold within both groups. A
+reseeded leak-free variant (independent rollout tape, common random
+numbers across branches) is left as future work.
+
+\section{Experiments}
+\label{sec:experiments}
+\textbf{Benchmark.} Brandimarte instances $\times$ map families
+(corridor maze / open random) $\times$ fleet sizes, on a full-stack
+coupled factory simulator: a discrete-event grid factory with a CP-SAT
+scheduling service and a rolling EECBS routing service. Episodes are
+subprocess-isolated with hard timeouts; all runs, seeds, and manifests
+are recorded. The baseline commitment encoding (\S\ref{sec:diagnosis})
+is the system's standard mode; soft commitments are an opt-in flag.
+\textbf{Campaign (1209 episodes total):} a 948-episode main factorial
+campaign (E1--E4) plus 261 episodes of route-backend sensitivity,
+arrival factorials, and value-aware-trigger comparison (E5--E7).
+\emph{E1} main factorial: $\{$mk01, mk02, mk05, mk07$\}$ $\times$ maze
+$\times$ $K\in\{2,4,6\}$ $\times$ $\{S_0, S_1{=}\texttt{m\_down}@150,
+S_4{=}\texttt{m\_down}@80{\times}200, S_3{=}\text{stochastic}\}$ $\times$
+4 policies $\times$ 3 seeds.
+\emph{E2} repeats a subset on the open map.
+\emph{E3} legacy-commitment control (trigger-level activation success).
+\emph{E4} penalty sweep $\Delta_{\mathrm{pen}}\in\{50,100,200,400\}$,
+plus a $\Delta_{\mathrm{pen}}{=}10$ stress test backing
+Proposition~\ref{prop:exec}.
+\emph{E5} route-backend sensitivity (EECBS vs Python LaCAM/PIBT).
+\emph{E6} arrivals factorial (legacy vs soft commitments;
+arrival-revision failures).
+\emph{E7} myopic value-aware trigger vs static/full.
+We report \emph{trigger-level activation success} (share of triggered
+revisions that activate; E1--E3) and \emph{arrival-revision failures}
+(failed arrival revisions; E6) as distinct metrics.
+
+\subsection{Results}
+
+\paragraph{R1: Soft commitments fix the mechanism (E3 vs E1/E2).}
+Under legacy encoding, revision activation succeeds only
+$56/(56{+}50)=53\%$ of trigger opportunities; with soft commitments,
+$1125/(1125{+}17)=\mathbf{99\%}$ ($216{+}216$ episodes, $2401$
+triggered revisions in total). The mechanism bottleneck is real and the
+fix removes it.
+
+\paragraph{R2: With the mechanism fixed, passive robustness dominates
+disruption response (E1+E2, 864 episodes).}
+Table~\ref{tab:imputed} reports makespans with right-censored episodes
+(timeouts or non-completion) imputed at the 4096-step cap, which removes
+survivorship bias. \textsc{static} beats \textsc{full}/\textsc{partial}
+\emph{in every disruption scenario}: paired win rate
+$143{:}12$ (61 ties, $n{=}216$), Wilcoxon
+$p<10^{-4}$ on each of $S_1, S_4, S_3$. Disruption regret
+(Table~\ref{tab:regret}) tells the same story: one-shot plans finish
+within $1.0$--$1.06\times$ of their no-disruption makespan even under
+200-step outages, whereas event-triggered revision with our conservative
+bounds pays $1.25$--$2.25\times$. Slack absorbs bounded disturbances;
+replanning under them only re-imposes conservatism.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{lrrrr}
+\toprule
+Scen & greedy & static & full & partial \\
+\midrule
+$S_0$ & 2136 & \textbf{1117} & 1117 & 1117 \\
+$S_1$ & 2115 & \textbf{1003} & 1309 & 1309 \\
+$S_4$ & 2201 & \textbf{1017} & 1333 & 1333 \\
+$S_3$ & 2464 & \textbf{1618} & 2281 & 2281 \\
+\bottomrule
+\end{tabular}
+\caption{Makespan (mean$\pm$std collapsed to mean; censored episodes
+imputed at 4096). \textsc{static} dominates all disruption scenarios.}
+\label{tab:imputed}
+\end{table}
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{lrrr}
+\toprule
+Scen & static & full/partial & $n$ \\
+\midrule
+$S_1$ (outage 40) & $0.99{\pm}0.03$ & $1.25{\pm}0.14$ & 46--48 \\
+$S_4$ (outage 200) & $1.06{\pm}0.11$ & $1.26{\pm}0.12$ & 44--48 \\
+$S_3$ (stochastic) & $1.03{\pm}0.05$ & $2.25{\pm}1.16$ & 37--39 \\
+\bottomrule
+\end{tabular}
+\caption{Disruption regret $\cmax(S)/\cmax(S_0)$ (finished episodes).}
+\label{tab:regret}
+\end{table}
+
+\paragraph{R3: Scope equivalence.}
+\textsc{full} and \textsc{partial} produced \emph{identical} episodes
+on every one of 216 paired runs: under single-machine failures the
+affected-successor scope already spans the entire reschedulable set, so
+scoped repair and full revision coincide. Scope differentiation requires
+concurrent multi-machine failures---outside our scenario set.
+
+\paragraph{R4: The penalty knob is real but locally flat (E4).}
+Sweeping $\Delta_{\mathrm{pen}}\in\{50,100,200,400\}$ on
+$\{$mk01, mk05$\}{\times}\{S_1,S_4\}$ shows no monotone trend
+(best mean at $200$: $899$/$817$ vs $939$--$1067$ elsewhere;
+$n{=}4$--$6$ per cell after censoring). A stress run at
+$\Delta_{\mathrm{pen}}{=}10$---twenty times below the default and far
+under any travel bound---completes all episodes with revisions
+activating normally and no execution violations, degrading only in
+makespan ($1392$--$3801$ vs $\sim$1400 at the default), exactly as
+Proposition~\ref{prop:exec} predicts: early-dispatched transfers wait
+at their sources rather than start prematurely. The knob exists and its
+response is measurable; adaptive or per-commitment penalties remain
+open.
+
+\paragraph{R7: A value-aware trigger improves on both extremes (E7, 108
+episodes).}
+Under local A$^*$ routing (the regime where the routing layer is
+weakest and replanning has the most room to matter), we compare
+\textsc{static}, \textsc{full}, and \textsc{myopic} on an identical
+factorial $\{$mk01, mk05$\}\times K\in\{4,6\}\times\{S_1,S_4,S_3\}
+\times$ 3 seeds. \textbf{\textsc{myopic} wins overall}: censored-imputed
+mean $2876$ vs $3018$ (\textsc{static}) and $3466$ (\textsc{full});
+censoring $14$ vs $15$/$20$; paired $14{:}9$ ($13$ ties) over static and
+$21{:}6$ ($9$ ties) over full. The mechanism is surgical: across $453$
+trigger evaluations it replanned only $6$ times ($1.3\%$)---almost
+always endorsing the law of R2 (leave the plan alone), yet capturing the
+rare states where revision pays (largest gain under $S_4$: $2039$ vs
+$2296$). A no-learning, snapshot-based lookahead thus instantiates the
+when-to-replan decision policy our diagnosis calls for; in this regime
+it improves on both never-replan and always-replan with paired
+significance, though the margin is modest against static ($14{:}9$) and
+the comparison is limited to local A$^*$ routing.
+
+\paragraph{R5: Arrivals (E6, 81 controlled episodes).}
+The regime where slack cannot help is work absent from the plan. On the
+pre-fix stack we observed total arrival starvation (throughput
+$24.4\to0.24$ jobs/ksteps); the controlled E6 factorial
+($\{$mk01, mk02, mk05$\}\times$ cadence $\{10..100\}\times$
+$\{$legacy, soft$\}\times$ 3 seeds, plus batch anchors) isolates what
+the \emph{commitment encoding} itself contributes on the repaired
+engine: legacy revisions still fail $1$--$18$ times per cell whenever
+an arrival lands mid-commitment, whereas soft commitments fail
+\textbf{never} ($0$ across all 72 streaming episodes). Operationally:
+soft guarantees completion everywhere ($10/10$, $15/15$ jobs; the worst
+legacy cell drops to $7/10$) and lifts throughput on the largest shop
+by $23$--$31\%$ (mk05: $8.1\to10.5$ at cadence 20, $9.6\to12.5$ at 50),
+while smaller shops are at parity---arrivals benefit from unblocked
+reliability rather than from dramatic rescue.
+
+\paragraph{R6: Route-backend sensitivity (E5, 72 episodes).}
+Swapping only the routing backend behind the identical protocol
+dramatically reshapes the coupled stack: with the production C++
+EECBS service, \textsc{static} completes these cells at
+$\approx$400--800 steps; with the reference Python LaCAM server every
+metric degrades to near-livelock ($\approx$3900, 4/36 errors), and the
+Python PIBT server fails outright (22/36 errors even at a relaxed 3s
+planning budget). The rolling closed loop is bottlenecked by
+\emph{per-replan latency} of the routing backend---consistent with the
+routing layer being the binding constraint of hierarchical
+decomposition, and a caution for evaluating learned MAPF backends
+inside coupled simulators.
+
+\section{Discussion: When \emph{Not} to Replan}
+Our factorial evidence inverts the usual closed-loop pitch. Once the
+commitment encoding is fixed and revisions actually execute, the
+\emph{correct} decision in every disruption scenario we could construct
+is to leave the one-shot plan alone: slack plus release-by-plan
+semantics absorbs 200-step outages within 6\%, and conservative
+revision consistently pays a $25$--$125\%$ premium for responsiveness
+that nothing needs. The regime where replanning is structurally
+indispensable is \emph{arrivals}---work absent from the plan that no
+amount of slack can absorb. This reframes closed-loop factory
+scheduling: the research question is not a better trigger policy but a
+\emph{decision policy} for when revision is worth its conservatism,
+plus commitment encodings whose penalty adapts (per-commitment travel
+bounds, learned penalties). Our unblocked stack makes that question
+measurable for the first time.
+
+\section{Conclusion}
+In coupled scheduling-and-path-finding stacks, the obstacle to
+closed-loop operation is not the replanning policy but the commitment
+encoding; a sound conservative relaxation lifts activation from 53\% to
+99\% and eliminates revision failures outright. With the pathway
+repaired, a 1209-episode factorial study shows that disruption response
+should, counterintuitively, stay open-loop: slack dominates
+conservatism. Replanning earns its keep through reliability under
+arrivals---guaranteed completion and up to $31\%$ throughput on larger
+shops---and a no-learning, lookahead value-aware trigger captures the
+best of both regimes surgically ($1.3\%$ replan rate, improving on both
+extremes in the studied regime). The remaining open problem is adaptive
+commitment penalties and richer value estimates, which our unblocked
+stack now makes measurable.
+
+\bibliographystyle{plain}
+\bibliography{references_icaps_en}
+
+\end{document}

@@ -1,0 +1,16 @@
+\begin{thebibliography}{1}
+
+\bibitem{heuragenix2025}
+Fei Liu et~al.
+\newblock {HeurAgenix}: Leveraging {LLMs} for solving complex combinatorial
+  optimization.
+\newblock {\em arXiv:2506.15196}, 2025.
+
+\bibitem{cobench2026}
+Wenbin Zheng et~al.
+\newblock {CO-Bench}: Benchmarking language model agents in algorithm search
+  for combinatorial optimization.
+\newblock In {\em Proceedings of the AAAI Conference on Artificial
+  Intelligence}, 2026.
+
+\end{thebibliography}

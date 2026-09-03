@@ -1,0 +1,75 @@
+\begin{thebibliography}{10}
+
+\bibitem{andreychuk2025mapfgpt}
+Anton Andreychuk, Konstantin Yakovlev, Dor Atzmon, and Roni Stern.
+\newblock {MAPF-GPT}: Imitation learning for multi-agent pathfinding at scale.
+\newblock In {\em Proceedings of the AAAI Conference on Artificial
+  Intelligence}, 2025.
+
+\bibitem{dauzere2024fjsp}
+St{\'e}phane Dauz{\`e}re-P{\'e}r{\`e}s and Jan Paulli.
+\newblock The flexible job shop scheduling problem: a review.
+\newblock {\em European Journal of Operational Research}, 2024.
+
+\bibitem{fahmy2008deadlock}
+Sherif~A. Fahmy et~al.
+\newblock Deadlock-free scheduling of flexible job shops with limited capacity
+  buffers.
+\newblock {\em International Journal of Industrial Engineering}, 2008.
+
+\bibitem{li2026framework}
+Rui Li et~al.
+\newblock A new framework for job shop integrated scheduling and vehicle path
+  planning problem.
+\newblock In {\em Sensors}, volume~26, page 543, 2026.
+
+\bibitem{ma2017mapd}
+Hang Ma, Jiaoyang Li, T.~K.~Satish Kumar, and Sven Koenig.
+\newblock Lifelong multi-agent path finding for online pickup and delivery
+  tasks.
+\newblock In {\em Proceedings of the International Conference on Autonomous
+  Agents and Multiagent Systems (AAMAS)}, 2017.
+
+\bibitem{okumura2023lacamstar}
+Keisuke Okumura.
+\newblock Improving {LaCAM} for scalable eventually optimal multi-agent
+  pathfinding.
+\newblock In {\em Proceedings of the International Joint Conference on
+  Artificial Intelligence (IJCAI)}, 2023.
+
+\bibitem{okumura2023lacam}
+Keisuke Okumura.
+\newblock {LaCAM}: Search-based algorithm for quick multi-agent pathfinding.
+\newblock In {\em Proceedings of the AAAI Conference on Artificial
+  Intelligence}, 2023.
+
+\bibitem{pogema2024}
+Alexey Skrynnik, Anton Andreychuk, and Konstantin Yakovlev.
+\newblock pogema: Partially observable multi-agent pathfinding environment.
+\newblock \url{https://github.com/TVisgr/pogema}, 2024.
+
+\bibitem{smit2025gnn}
+Igghard Smit et~al.
+\newblock Graph neural networks for job shop scheduling problems: a review.
+\newblock {\em Computers \& Operations Research}, 2025.
+
+\bibitem{desousa2024buffer}
+De~Sousa et~al.
+\newblock Flexible job-shop scheduling with buffer and transportation
+  constraints.
+\newblock {\em IEEE Access}, 2024.
+
+\bibitem{xin2025fjsppt}
+Bin Xin et~al.
+\newblock A review of flexible job shop scheduling problems considering
+  processing machines and transportation vehicles.
+\newblock {\em Frontiers of Information Technology \& Electronic Engineering},
+  2025.
+
+\bibitem{zhang2020l2d}
+Cong Zhang, Wen Song, Zhiguang Cao, Jie Zhang, Puay~Siew Tan, and Chi Xu.
+\newblock Learning to dispatch for job shop scheduling via deep reinforcement
+  learning.
+\newblock In {\em Advances in Neural Information Processing Systems}, 2020.
+
+\end{thebibliography}

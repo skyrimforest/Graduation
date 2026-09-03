@@ -1,0 +1,144 @@
+\documentclass[UTF8,12pt,a4paper]{ctexart}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{booktabs}
+\usepackage{geometry}
+\usepackage{hyperref}
+\geometry{margin=2.5cm}
+\newtheorem{definition}{定义}
+\newtheorem{remark}{注}
+
+\title{从完工时间到吞吐率：Lifelong FJSP+MAPF 的\\流式规约、到达门控实现与稳态指标}
+\author{SkyResearch}
+\date{2026年9月1日 \quad v1 草稿}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+调度社区的动态 FJSP（订单持续到达）与规划社区的终身 MAPF（MAPD，
+取送货任务流）研究的是同一车间现象的两半：前者有加工约束而无栅格
+路由，后者反之。本文（1）给出二者统一的流式规约 \textbf{L-IFJSP-MAPF}
+与稳态指标（千步吞吐、流水时间、服务率/饱和诊断）；（2）给出 SkyEngine
+上的无侵入实现——\textbf{到达门控}（Arrival Gate）：$t<a_j$ 时将工件 $j$
+从调度层观测滤除，新工件到达触发承诺一致的残差修订，修订不可用时
+对规则求解器做残差硬复位；（3）8-episode 试点给出一个强反差结果：
+批量模式下 CP-SAT 一次成型调度的吞吐是规则式的 2.7 倍（24.4 vs 9.1
+件/千步），但\textbf{任何}订单流下其吞吐崩塌两个数量级（0.24，后续工件
+全部饥饿——承诺机制拒绝一切修订），而规则式经复位重建优雅降级
+（9.1$\to$2.9）。``静态最优 $\neq$ 流式可用''：可违约承诺/滚动重初始化
+是流式调度的前置条件。
+\end{abstract}
+
+\section{引言}
+
+静态 I-FJSP-MAPF（姊妹篇）假设全部工件 $t{=}0$ 已知，目标 makespan。
+真实车间是流式的：订单按到达过程释放，系统在任意时刻只持有部分信息，
+关心的指标是\textbf{吞吐}与\textbf{流水时间}。MAPD 文献
+\cite{ma2017mapd,li2021rhcr} 研究流式取送货但无加工；
+动态 FJSP 文献研究订单到达但无路由。本篇做三件事：统一规约、
+引擎落地、稳态测量。
+
+\section{流式规约 L-IFJSP-MAPF}\label{sec:form}
+
+\subsection{到达过程}
+工件 $j$ 的到达时刻 $a_j\ge 0$ 由外生过程给出：确定性节拍
+$a_j = j\rho$ 或泊松（参数 $\lambda$），种子独立于决策种子。
+$t<a_j$ 时工件 $j$ 对调度层\emph{不可见}（无预知）。
+
+\subsection{稳态指标}
+给定到达率 $r=1/\rho$ 与车队 $\mathcal{K}$，对长度 $T$ 的轨道：
+\begin{align}
+\text{吞吐} \quad & \Theta_T = \tfrac{1}{T}\,\bigl|\{j:\, C_j\le T\}\bigr|\times 1000
+\quad(\text{件/千步}),\\
+\text{平均流水时间} \quad & F_T = \tfrac{1}{|\{j: C_j\le T\}|}\sum_{j}(C_j - a_j),\\
+\text{车队有效利用率} \quad & \eta = \text{载货时长}/(KT).
+\end{align}
+\begin{definition}[服务率与饱和]
+系统在配置 $\theta$ 下的\textbf{服务率} $\mu(\theta)$ 为使其吞吐满足
+$\limsup_{T\to\infty}\Theta_T\cdot T/1000 = r$ 的最大可达到达率；
+$r>\mu(\theta)$ 时队列无界增长（饱和），$F_T$ 发散。
+\end{definition}
+研究问题 Q1：$\mu$ 随 $(K,\text{地图},\sigma)$ 如何变化（吞吐—资源曲线）？
+Q2：稳态下各求解器组合的 $F$ 排序是否与静态 makespan 排序一致
+（静态排序的代表性检验）？Q3：接近饱和时活性失稳（姊妹篇发现6）
+是否加剧？
+
+\subsection{与 MAPD 的关系}
+令加工时长为 0、机器集合退化为取/送货点对，L-IFJSP-MAPF 退化为
+MAPD\cite{ma2017mapd}；因此 token-passing 类 MAPD 算法是本问题的
+合法对照（把加工视为零时长服务）。
+
+\section{到达门控实现}\label{sec:gate}
+
+SkyEngine 的调度层消费 \texttt{job\_observation=\{jobs, machines\}}，
+运输任务仅在调度层释放其运输请求后进入任务池。据此，到达门控
+\texttt{ArrivalGateJobSolver} 包装任意内层求解器：
+\begin{enumerate}
+  \item \texttt{plan(obs)}：滤除 $t<a_j$ 的工件后委托内层；
+  \item 新工件跨越到达时刻时：内层为 CP-SAT（replayable）则触发一次
+    \texttt{request\_plan\_revision}（承诺一致，在制/在途不受扰），
+    内层为规则式则无需处理（每步重建）。
+\end{enumerate}
+该实现\textbf{零侵入}（不改引擎），可复现（到达表由种子派生），
+且天然支持后续把节拍换成泊松/突增/批量到达。
+
+\section{试点实验}\label{sec:pilot}
+
+$\{$mk01$\}$ $\times$ 迷宫 $\times$ agv4 $\times$ $\rho\in\{0,20,50,100\}$
+$\times$ $\{$greedy+astar, cpsat+eecbs$\}$，8 episode（进程级隔离）。
+
+\begin{table}[h]
+\centering
+\begin{tabular}{llrrrr}
+\toprule
+节拍 $\rho$ & 求解器 & 完工 & 吞吐(件/千步) & makespan & 到达处理 \\
+\midrule
+0 (批量) & greedy+astar & 10/10 & 9.08 & 1099 & — \\
+0 (批量) & cpsat+eecbs  & 10/10 & \textbf{24.39} & \textbf{408} & — \\
+20 & greedy+astar & 10/10 & \textbf{3.61} & 2770 & 复位重建$\times$9 \\
+20 & cpsat+eecbs  & \textbf{1/10} & 0.24 & 99 & 修订失败$\times$9$\to$饥饿 \\
+50 & greedy+astar & 10/10 & \textbf{3.55} & 2812 & 复位重建$\times$9 \\
+50 & cpsat+eecbs  & 1/10 & 0.24 & 99 & 修订失败$\times$9$\to$饥饿 \\
+100 & greedy+astar & 10/10 & \textbf{2.87} & 3487 & 复位重建$\times$9 \\
+100 & cpsat+eecbs  & 1/10 & 0.24 & 99 & 修订失败$\times$9$\to$饥饿 \\
+\bottomrule
+\end{tabular}
+\caption{Lifelong 试点。``复位重建''= 到达门控对新工件硬复位规则求解器
+（残差重建，尊重已执行前缀）；``修订失败''= 承诺一致修订全部被
+``未解决承诺''拒绝（与方向1 发现 F2 同根因）。}
+\label{tab:lifelong}
+\end{table}
+
+\textbf{发现}：
+\begin{enumerate}
+  \item \textbf{静态最优 $\neq$ 流式可用}：批量模式下 CP-SAT 吞吐为规则的
+    2.7 倍（24.4 vs 9.1）；一旦存在订单流（任何节拍），其吞吐\textbf{崩塌
+    两个数量级}（0.24，仅首批工件完工，后续全部饥饿）——一次成型计划
+    无法吸收到达，而承诺机制阻止修订（$\to$方向1 的机制层议程是
+    流式调度的前置条件）；
+  \item \textbf{规则式的优雅降级}：greedy 随节拍变慢吞吐仅从 9.1 降到
+    2.9（节拍本身就是上限 3.3--0.8 的量级），复位重建机制
+    （新工件 $\to$ 残差重规划）完全吸收到达流；
+  \item \textbf{吞吐的节拍弹性}：greedy 在 $\rho{=}20$ 与 $\rho{=}50$ 吞吐
+    几乎不变（3.61 vs 3.55）——远离饱和点时系统对到达率不敏感，
+    饱和诊断（定义 3.1）需要更高的 $\lambda$ 扫描才能定位。
+\end{enumerate}
+
+\section{正式实验计划}
+
+多实例（mk01/02/05/07）$\times$ 两地图 $\times K\in\{2,4,6,8\}$ $\times$
+泊松到达 $\lambda$ 扫描 $\times$ 3 种子，估计服务率曲线（每点
+$\ge$3 episode $\times$ $T{=}8000$ 步），约 500 episode $\times$ 15s
+$\approx$ 2 小时；MAPD token-passing 对照臂另需实现适配（列为后续）。
+[FULL\_RUN\_PLACEHOLDER]
+
+\section{结论}
+
+本篇把 FJSP+MAPF 从批式推进到流式：统一规约 L-IFJSP-MAPF、
+稳态指标体系、无侵入的到达门控实现。代码见 \texttt{sky\_research}
+分支 \texttt{0901lifelong}。
+
+\bibliographystyle{plain}
+\bibliography{references_lifelong}
+
+\end{document}
