@@ -1,0 +1,19 @@
+filename,title,year,source,status,role
+2025_DyRo-MCTS_Dynamic_Job_Shop_Scheduling.pdf,DyRo-MCTS A Robust Monte Carlo Tree Search Approach to Dynamic Job Shop Scheduling,2025,https://arxiv.org/abs/2509.21902,downloaded_verified,robust online MCTS under dynamic job arrivals
+2025_Li_Real-Time_Scheduling_DFJSP_AGV_MARL.pdf,Real-Time Scheduling for Flexible Job Shop With AGVs Using Multiagent Reinforcement Learning and Efficient Action Decoding,2025,https://doi.org/10.1109/TSMC.2024.3520381,publisher_access_required,four-event dynamic FJSP-AGV MARL baseline
+2024_HGS_Learning-enabled_FJSP_Scalable_Smart_Manufacturing.pdf,Learning-enabled Flexible Job-shop Scheduling for Scalable Smart Manufacturing,2024,https://arxiv.org/abs/2402.08979,downloaded,heterogeneous graph and scale generalization
+2024_Offline_RL_for_Job-Shop_Scheduling.pdf,Offline reinforcement learning for job-shop scheduling problems,2024,https://arxiv.org/abs/2410.15714,downloaded,offline RL and expert demonstrations
+2024_CP_Deep_Learning_Dynamic_FJSP.pdf,Leveraging Constraint Programming in a Deep Learning Approach for Dynamically Solving the Flexible Job-Shop Scheduling Problem,2024,https://arxiv.org/abs/2403.09249,downloaded,hybrid learning and feasibility repair
+2025_MARL_Flexible_Shop_Scheduling_Survey.pdf,Multi-agent reinforcement learning for flexible shop scheduling problem: a survey,2025,https://doi.org/10.3389/fieng.2025.1611512,downloaded,MARL survey and evaluation design
+2025_LRHO_Learning-guided_Rolling_Horizon_FJSP.pdf,Learning-guided Rolling Horizon Optimization for Long-Horizon Flexible Job-Shop Scheduling,2025,https://openreview.net/forum?id=Aly68Y5Es0,not_downloaded_403,learning-guided rolling horizon
+2026_RESCHED_Transformer_FJSP.pdf,RESCHED Rethinking Flexible Job Shop Scheduling from a Transformer-Based Architecture with Simplified States,2026,https://openreview.net/forum?id=s5pWbwf2tk,not_downloaded_403,transformer and simplified states
+2025_Multi-Policy_Self-Evolution_Job_Scheduling.pdf,Towards Generalizable Multi-Policy Optimization with Self-Evolution for Job Scheduling,2025,https://openreview.net/forum?id=VPm6afl0Sc,not_downloaded_403,multi-policy optimization
+2604.01325v1.pdf,The Digital Twin Counterfactual Framework: A Validation Architecture for Simulated Potential Outcomes,2026,https://arxiv.org/abs/2604.01325,downloaded_verified,L2 paired clone counterfactual (DTCF formalization)
+2212.06355.pdf,A Review of Off-Policy Evaluation in Reinforcement Learning,2022,https://arxiv.org/abs/2212.06355,downloaded_verified,OPE survey for L4 propensity logging design
+1503.02834.pdf,Doubly Robust Policy Evaluation and Optimization,2014,https://arxiv.org/abs/1503.02834,downloaded_verified,doubly-robust OPE estimator
+1911.06854.pdf,Empirical Study of Off-Policy Policy Evaluation for Reinforcement Learning,2021,https://arxiv.org/abs/1911.06854,downloaded_verified,OPE estimator empirical comparison
+2009.00148.pdf,Design and Analysis of Switchback Experiments,2023,https://arxiv.org/abs/2009.00148,downloaded_verified,interference-aware experiment design reference
+1706.03461.pdf,Meta-learners for Estimating Heterogeneous Treatment Effects using Machine Learning,2019,https://arxiv.org/abs/1706.03461,downloaded_verified,CATE meta-learners
+1510.04342.pdf,Estimation and Inference of Heterogeneous Treatment Effects using Random Forests,2018,https://arxiv.org/abs/1510.04342,downloaded_verified,causal forest CATE
+2021_Bellot_Synthetic_Controls_Continuous_Time.pdf,Policy Analysis using Synthetic Controls in Continuous-Time,2021,http://proceedings.mlr.press/v139/bellot21a.html,downloaded_verified,synthetic control counterfactual trajectory (related work)
+2024_CausalML_Book_Chernozhukov.pdf,Applied Causal Inference Powered by ML and AI,2024,https://causalmlbook.org,not_downloaded_ssl,causal ML book (TLS handshake failure server-side)

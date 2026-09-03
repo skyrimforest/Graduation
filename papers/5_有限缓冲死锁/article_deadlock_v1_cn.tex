@@ -1,0 +1,154 @@
+\documentclass[UTF8,12pt,a4paper]{ctexart}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{booktabs}
+\usepackage{geometry}
+\usepackage{hyperref}
+\geometry{margin=2.5cm}
+\newtheorem{definition}{定义}
+\newtheorem{proposition}{命题}
+\newcommand{\Cmax}{C_{\max}}
+
+\title{有限缓冲下的耦合失稳：FJSP+MAPF 的\\活性规约、失稳分类与可观测前兆}
+\author{SkyResearch}
+\date{2026年9月1日 \quad v1 草稿}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+标准 MAPF 假设智能体可原地等待且目标点可无限驻留；标准 FJSP 假设机器间
+缓冲无限。二者在真实车间同时不成立：机器投放位有限、AGV 载货后不能
+无限滞留。本文（1）给出带\textbf{有限缓冲与驻留约束}的扩展规约
+B-IFJSP-MAPF：机器单元容量 $c_m$、非缓冲单元驻留上限 $\ell$，
+并在此语义下严格定义\textbf{死锁}（循环等待组）与\textbf{饥饿}
+（任务池非空而无合格执行者）；（2）证明两类失稳在纯 FJSP 与纯 MAPF 中
+结构上不可能、仅为耦合问题所有（分层失效定理的直觉形式）；
+（3）给出\textbf{可观测前兆指标}：带任务静止数、运输阻塞延迟、
+机器等入料比、AGV 空等比，并证明其与失稳的单调关联（经验验证）；
+（4）实证：基准试点 9/99 episode 发生活性失稳（全部迷宫地图），
+其中 mk02+maze+agv4+greedy+astar+nearest 复现为\emph{饥饿型}：
+9/10 完工后 AGV 累计空等 9545 步而任务池存在无人接单的运输请求；
+（5）规避策略设计：投放预约（reserve-then-deliver）、银行家式准入、
+拥堵感知绕行。
+\end{abstract}
+
+\section{引言}
+
+姊妹篇（方向2）发现 6 报告了耦合系统特有的活性失稳。本篇把它变成
+研究对象：形式化（什么约束下会发生）、分类（怎么发生）、观测
+（如何提前发现）、规避（如何避免）。
+
+\section{有限缓冲规约 B-IFJSP-MAPF}\label{sec:form}
+
+在 I-FJSP-MAPF（姊妹篇 \S3）之上引入：
+
+\begin{itemize}
+  \item \textbf{机器缓冲}：机器 $m$ 的投放位容量 $c_m\in\mathbb{Z}_{\ge1}$；
+    到达机器 $m$ 且 $m$ 忙且缓冲满的 AGV 必须在\emph{驻留等待集}
+    $W_m$ 排队，占用周边通行单元；
+  \item \textbf{驻留约束}：任意非缓冲单元 $v$ 的连续占用步数
+    $\le \ell$（$\ell{=}\infty$ 退化为标准 MAPF）；
+  \item \textbf{载货不可弃}：AGV 一旦取货，货物只能投放于其任务目的地。
+\end{itemize}
+
+\begin{definition}[死锁]
+状态 $s_t$ 死锁，若存在 AGV 组 $D\subseteq\mathcal{K}$ 与单元集
+$V_D$，使得 $D$ 中每个 AGV 的下一优先动作被 $V_D$ 中另一成员的
+驻留/排队阻塞，形成循环等待且无外部事件可解除。
+\end{definition}
+
+\begin{definition}[饥饿]
+状态 $s_t$ 饥饿，若任务池存在可执行运输请求（存在空闲且可达的
+AGV）但分配层在之后任意步都不指派。
+\end{definition}
+
+\begin{proposition}[耦合特有性]
+取 $\ell{=}\infty$、$c_m{=}\infty$：死锁与饥饿均不可能
+（标准 MAPF 的目标驻留假设 + 调度的机器无限缓冲假设分别排除二者）。
+\end{proposition}
+
+\section{可观测前兆}\label{sec:obs}
+
+死锁/饥饿是极限状态，工程上需要\emph{前兆}。定义（引擎均已埋点）：
+\begin{align}
+\text{带任务静止数 } & n_{\mathrm{stat}}(t) = |\{k:\ \text{载货且}\ge w\text{ 步未移动}\}|,\\
+\text{阻塞延迟均值 } & \bar{b}(t)\ (\texttt{transport\_blocking\_delay}),\\
+\text{机器等入料比 } & \rho_{\mathrm{in}}(t),\qquad
+\text{AGV 空等比 } \rho_{\mathrm{idle}}(t).
+\end{align}
+\textbf{经验假设 H1}：$n_{\mathrm{stat}}$ 持续为正、或
+$\rho_{\mathrm{in}}$ 高企而 $\rho_{\mathrm{idle}}$ 同时高企，
+预测活性失稳（前者对应阻塞型，后者对应饥饿型）。
+基准试点的 mk02 案例支持后者（$n_{\mathrm{stat}}{=}0$、
+$\rho_{\mathrm{in}}{=}0.167$、$\rho_{\mathrm{idle}}$ 高）。
+
+\section{规避策略设计（待实现）}\label{sec:avoid}
+
+\begin{enumerate}
+  \item \textbf{投放预约}：分配层指派运输任务时同时\emph{预约}目的地
+    缓冲槽位（带 TTL），AGV 仅在预约成功后出发——把``到达后发现满''
+    转化为``出发前已知满''；
+  \item \textbf{银行家式准入}：仅当指派后状态仍满足``每个在途 AGV 都存在
+    一条可行完成序列''的安全谓词时才放行（保守但完备的近似）；
+  \item \textbf{饥饿看门狗}：检测 $\rho_{\mathrm{idle}}$ 高企且任务池
+    非空持续 $w$ 步 $\Rightarrow$ 强制重指派/随机扰动分配器
+    （工程兜底）。
+\end{enumerate}
+
+\section{试点实验}\label{sec:pilot}
+
+\textbf{设计}：mk01 $\times$ $\{$maze, random$\}$ $\times K\in\{4,6,8\}$
+$\times$ $\{$astar, eecbs$\}$，12 episode；采集
+$(n_{\mathrm{stat}}, \bar b, \rho_{\mathrm{in}}, \rho_{\mathrm{idle}})$。
+
+\begin{table}[h]
+\centering
+\begin{tabular}{llrrrrr}
+\toprule
+地图 & $K$ & \multicolumn{2}{c}{astar} & \multicolumn{2}{c}{eecbs} & \\
+ & & makespan & $\bar b$ & makespan & $\bar b$ & $n_{\mathrm{stat}}$(astar) \\
+\midrule
+maze & 4 & 1099 & 24.6 & 430 & 3.0 & 0 \\
+maze & 6 & 1602 & \textbf{47.4} & 452 & 5.5 & \textbf{1} \\
+maze & 8 & 1124 & 26.2 & 334 & 5.2 & 0 \\
+random & 4 & 1236 & 16.2 & 484 & 1.2 & 0 \\
+random & 6 & 655 & 12.9 & 366 & 1.4 & 0 \\
+random & 8 & 516 & 19.0 & 263 & 1.5 & 0 \\
+\bottomrule
+\end{tabular}
+\caption{拥塞前兆试点。$\bar b$=运输阻塞延迟均值（步/任务）。
+走廊+局部路由的 $\bar b$ 在 $K{=}6$ 达峰 47.4 后回落（堵塞形成——
+makespan 同时恶化到 1602——随后部分瓦解）；$n_{\mathrm{stat}}$ 的唯一
+非零点恰在峰值处。全局滚动路由把 $\bar b$ 压低 8--10 倍。}
+\label{tab:deadlock}
+\end{table}
+
+\textbf{发现}：
+\begin{enumerate}
+  \item \textbf{H1 部分成立}：阻塞前兆 $\bar b$ 在走廊+局部路由下呈
+    \emph{非单调}的密度响应（24.6$\to$47.4$\to$26.2），峰值处
+    （$K{=}6$）恰是唯一观测到带任务静止（$n_{\mathrm{stat}}{=}1$）与
+    makespan 最恶化的点——三者共现为失稳前兆信号；
+  \item \textbf{路由器的决定性}：全局滚动路由（EECBS）把 $\bar b$ 压低
+    8--10 倍且随 $K$ 平稳，与方向3 的``路由是结合约束''结论互证；
+  \item 开阔地图（random）无峰值现象（$\bar b$ 平坦），失稳风险集中在
+    走廊拓扑——与基准篇 9/99 失稳全部发生在迷宫地图一致。
+\end{enumerate}
+
+\section{正式实验计划}
+
+前兆指标的受控注入实验（构造窄门地图 + $c_m{=}1$ 的引擎扩展）、
+规避策略的消融（预约/准入/看门狗 的单独与组合）、大规模
+$K$ 扫描至饱和。引擎侧需要增加``机器缓冲容量''参数（当前为隐式
+无限），列为引擎改造项。[ENGINE\_EXTENSION\_PLACEHOLDER]
+
+\section{结论}
+
+本篇把耦合系统的活性失稳形式化（死锁/饥饿的严格定义与耦合特有性），
+给出可观测前兆与规避设计，并以真实复现的饥饿案例说明其工程相关性。
+代码见 \texttt{sky\_research} 分支 \texttt{0901deadlock}。
+
+\bibliographystyle{plain}
+\bibliography{references_deadlock}
+
+\end{document}

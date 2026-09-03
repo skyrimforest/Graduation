@@ -1,0 +1,112 @@
+\documentclass[UTF8,12pt,a4paper]{ctexart}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{booktabs}
+\usepackage{geometry}
+\usepackage{hyperref}
+\geometry{margin=2.5cm}
+\newtheorem{definition}{定义}
+
+\title{引擎接地的调度诊断解释层：LLM 在 FJSP+MAPF 耦合系统中的\\定位、归因与可验证干预}
+\author{SkyResearch}
+\date{2026年9月1日 \quad v1 草稿（设计+基线，LLM 推理待配置）}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+FJSP+MAPF 耦合系统产生丰富的运行工件（指标轨迹、扰动事件流、计划修订账本、
+异常日志），但缺少把它们变成\emph{可理解因果叙述}的层。本文提出
+\textbf{引擎接地的 LLM 诊断层}：（1）形式化调度诊断任务
+$\mathcal{D}:(\tau,q)\mapsto e$——给定轨迹 $\tau$ 与查询 $q$，产出
+解释 $e=(\text{定位},\text{归因},\text{证据},\text{干预})$；
+（2）三个设计支柱：\emph{结构化证据打包}（引擎工件→紧凑上下文）、
+\emph{接地约束}（解释中的每个证据可回查日志）、\emph{反事实验证}
+（推荐干预在引擎中重仿真，$\Delta$KPI 即为干预效果的客观评分——
+LLM 不被允许``讲故事''）；（3）诊断案例数据集：以已知注入扰动为
+ground truth 的 $(\tau, e^*)$ 对，支持定位准确率/干预成功率/忠实度的
+定量评测；（4）实现规则基线诊断器与 LLM 提示模板，LLM 推理接口
+留待配置后一键评测。与 LLM-CO 工作（HeurAgenix、CO-Bench 生成启发式）
+不同，本层是\emph{事后诊断}且\emph{可被引擎证伪}。
+\end{abstract}
+
+\section{引言}
+
+姊妹篇们把耦合系统当作被优化对象；本篇把它当作\emph{被解释对象}。
+动机：车间运维人员面对的不是一个最优解，而是``为什么这批单晚了/
+为什么 AGV 都在等''——这需要把指标轨迹、事件流与计划演变合成
+因果叙述。LLM 恰好擅长叙述合成，但其可信性需要\textbf{接地}
+（grounding）：证据可回查、判断可验证。
+
+三个社区现状：LLM-CO（HeurAgenix\cite{heuragenix2025}、
+CO-Bench\cite{cobench2026}）用 LLM 设计启发式/搜算法——生成侧、
+无引擎验证闭环；XAI-for-scheduling 集中在特征归因而非事件级因果；
+SkyEngine 已有丰富的审计工件（修订账本、异常日志、指标枢纽）但
+无人消费它们。
+
+\section{诊断任务形式化}\label{sec:form}
+
+\begin{definition}[轨迹]
+$\tau = (\mathbf{m}_{0:T},\ \mathbf{e}_{0:T},\ \mathbf{r}_{0:T},\ \Sigma)$：
+指标轨迹 $\mathbf{m}$（每 $w$ 步的 KPI 向量）、事件流 $\mathbf{e}$
+（扰动/恢复/冲突）、计划修订账本 $\mathbf{r}$、episode 汇总 $\Sigma$。
+\end{definition}
+
+\begin{definition}[诊断]
+$\mathcal{D}: (\tau, q) \mapsto e$，其中查询 $q$ 如``makespan 为何超预期''
+``哪台资源是瓶颈''；解释
+$e = (\ell, h, V, \iota)$：定位 $\ell$（资源/区域/时段）、
+归因假设 $h$（原因类别：扰动/拥堵/饥饿/计划失配/参数失当）、
+证据 $V\subseteq\tau$（可回查的索引集合）、干预 $\iota$
+（参数/策略/配置的具体修改建议）。
+\end{definition}
+
+\textbf{评测}（ground truth 来自受控注入）：
+\begin{align}
+\text{定位准确率} &= \Pr[\ell = \ell^*], \qquad
+\text{归因准确率} = \Pr[h = h^*],\\
+\text{干预成功率} &= \Pr\bigl[\mathrm{KPI}(\text{re-sim}(\iota)) \ge \mathrm{KPI}(\tau) + \delta\bigr],\\
+\text{忠实度} &= \Pr[\text{每条证据可回查且语义一致}].
+\end{align}
+反事实验证是核心：干预建议在引擎中\emph{重仿真}取得 $\Delta$KPI，
+LLM 的叙述质量被客观化。
+
+\section{架构}\label{sec:arch}
+
+\begin{enumerate}
+  \item \textbf{证据打包器}：$\tau\to$ 紧凑上下文（KPI 轨迹分段摘要、
+    事件时间线、修订统计、拓扑摘要），预算约 4--8k token；
+  \item \textbf{诊断策略}：规则基线（阈值+峰值定位）/ LLM
+    （提示模板含接地约束：``仅引用给定证据 ID''``干预必须可在
+    配置中落地''）/ 混合（规则出候选、LLM 排序叙述）；
+  \item \textbf{反事实执行器}：对 $\iota$ 修改配置重仿真（引擎确定性
+    保证公平对比），产出 $\Delta$KPI 回填为训练/评测信号——
+    可进一步做 DPO 式的自我改进闭环。
+\end{enumerate}
+
+\section{案例数据集与基线（本篇已交付部分）}
+
+\textbf{构建}：复用方向1 的扰动试点（已知 $\ell^*,h^*$）+ 方向2 的
+失稳案例（饥饿型活锁，ground truth = 任务池无人接单），
+每案例打包为 JSON（轨迹摘要+事件+汇总+ground truth）。
+\textbf{规则基线}：峰值队列→机器定位；阻塞延迟高→拥堵归因；
+AGV 空闲率高且任务池非空→饥饿归因；修订账本激增→计划失配。
+\textbf{结果占位}：[LLMDIAG\_BASELINE\_TABLE]
+
+\section{正式实验计划（待配置后执行）}
+
+（i）LLM 端：提示模板 A/B（含/不含接地约束）$\times$ 模型规模，
+评测忠实度增益；（ii）反事实执行器跑通 top-$k$ 干预重仿真
+（每案例 3--5 次 episode，分钟级）；（iii）案例集扩至 200+
+（覆盖 5 类 ground truth）。[LLM\_RUN\_PLACEHOLDER]
+
+\section{结论}
+
+本篇定义了引擎接地的调度诊断任务（定位/归因/证据/干预四元组 +
+反事实验证评测），交付案例数据集构建器、规则基线与提示模板，
+LLM 推理与自我改进闭环列为下一步。代码见 \texttt{sky\_research}
+分支 \texttt{0901llmdiag}。
+
+\bibliographystyle{plain}
+\bibliography{references_llmdiag}
+
+\end{document}

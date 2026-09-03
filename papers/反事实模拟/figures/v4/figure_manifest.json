@@ -1,0 +1,18 @@
+{
+  "figures": {
+    "fig07_racing_elimination": {
+      "pdf_sha256": "7c393a8172dc92ce72927e59403379093c0bb5da9f2fc2304643d13fa7fdb07d",
+      "png_sha256": "fda701c08644d087ffcff5effe4cf7c47da91197da03cb0aabb2448e3ba4e74e"
+    },
+    "fig08_racing_structure": {
+      "pdf_sha256": "1b2eb9a77e316d5d84136a8b528137e62741b6058a7d932ad9fd4e39e490ebc2",
+      "png_sha256": "38466d21560b7676da757d7cf5cfb66c89f86cad33c88a536afeb611d9acbf80"
+    }
+  },
+  "schema_version": "skycausal.paper-figures.v4",
+  "source": {
+    "racing_result": "codebase/SkyEngine/racing_results/compose-smoke/racing_result.json",
+    "racing_result_sha256": "2366b76eedda74d1e8f20d035fa1eb5eca887206eae4176fc0de2696d5e2bc0a",
+    "racing_semantic_hash": "2619c235cdfd58f5e37c3cb92e88f8338b05d2a8f1f10eafef2ecc9a4f96d414"
+  }
+}

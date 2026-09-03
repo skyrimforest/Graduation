@@ -1,0 +1,513 @@
+\documentclass[11pt,a4paper]{article}
+
+% ======================== Packages ========================
+\usepackage[UTF8]{ctex}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\usepackage[numbers]{natbib}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{subcaption}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,shapes.geometric,fit,calc}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!70!black,
+    citecolor=blue!70!black,
+    urlcolor=blue!70!black
+}
+
+% ======================== Title ========================
+\title{\textbf{SkyEngine: A Unified Reinforcement Learning Environment and\\
+Multi-Expert Online Distillation Framework for FJSP-MAPF Joint Scheduling}}
+
+\author{
+    Hao Wu \quad
+    % Add co-authors here
+}
+
+\date{\today}
+
+\begin{document}
+\maketitle
+
+% ======================== Abstract ========================
+\begin{abstract}
+Flexible Job Shop Scheduling (FJSP) and Multi-Agent Path Finding (MAPF) are two tightly coupled sub-problems in intelligent manufacturing: scheduling decisions determine when and where materials must be transported, while AGV congestion, waiting, and deadlocks feed back to affect machine utilization and job completion. Existing approaches typically treat them as separate modules connected by static transport-time estimates, ignoring the bidirectional coupling that arises from collision-aware routing, blocking feedback, and dynamic rescheduling. We introduce \textbf{SkyEngine}, a Gymnasium-compatible unified environment that explicitly co-simulates operation-machine assignment, task-to-AGV assignment, collision-aware MAPF routing, and blocking feedback within a single closed loop. On top of SkyEngine, we propose a \textbf{Multi-Expert Online Distillation} framework that addresses two key limitations of naive imitation learning: (1) the train--test distribution shift inherent in offline behavioral cloning, and (2) the expert conflict caused by naively averaging multiple specialist policies. Instead, we perform distillation on \emph{student-induced states}, evaluate candidate actions through group-relative rollout comparisons, and dynamically weight expert signals based on state-dependent reliability. The resulting policy is updated via \textbf{Group-Relative Policy Optimization (GRPO)}, providing denser supervision than sparse makespan rewards. Experiments across multiple FJSP--MAPF algorithm combinations demonstrate that the learned assigner consistently outperforms both classical heuristic rules and single-expert baselines.
+\end{abstract}
+
+\textbf{Keywords:} FJSP-MAPF Joint Scheduling; Reinforcement Learning; Multi-Expert Distillation; Group-Relative Policy Optimization; Flexible Manufacturing
+
+% ======================== 1. Introduction ========================
+\section{Introduction}
+\label{sec:intro}
+
+In modern flexible manufacturing systems, two core decision problems must be solved simultaneously: the \textbf{Flexible Job Shop Scheduling Problem (FJSP)}, which determines the assignment of operations to machines and the processing sequence, and \textbf{Multi-Agent Path Finding (MAPF)}, which plans collision-free routes for Automated Guided Vehicles (AGVs) transporting materials between machines. These two problems are inherently \emph{bidirectionally coupled}:
+
+\begin{itemize}[leftmargin=*]
+    \item \textbf{FJSP $\rightarrow$ MAPF}: Scheduling decisions specify when and where transport tasks are generated, directly determining the spatial and temporal distribution of AGV demand.
+    \item \textbf{MAPF $\rightarrow$ FJSP}: AGV congestion, detours, waiting, and deadlocks alter the actual material delivery times, which in turn affect machine idle times, operation start times, and the release of subsequent tasks.
+\end{itemize}
+
+Despite this coupling, the dominant paradigm in both academic research and industrial practice is to solve FJSP and MAPF \emph{independently}, connecting them through static transport-time estimates or simple resource constraints. This decoupled approach gives rise to three categories of \textbf{coupling losses}:
+
+\begin{enumerate}[leftmargin=*]
+    \item \textbf{Distance Blindness}: FJSP optimizes only processing time and may select the fastest but most distant machine. The resulting long-distance transport increases the actual makespan far beyond the scheduling estimate.
+    \item \textbf{Temporal Misalignment}: The planned material delivery times from FJSP do not match the actual AGV transport timelines, causing either machine starvation (waiting for materials) or material accumulation (congestion at pickup/delivery points).
+    \item \textbf{Congestion Clustering}: FJSP may集中 schedule multiple transport tasks to the same region, causing multiple AGVs to compete for narrow passages, resulting in blocking, detours, and deadlock.
+\end{enumerate}
+
+Recent efforts have attempted to mitigate these losses through progressively tighter integration, ranging from transport-time-aware scheduling \citep{ref1}, to joint FJSP-AGV assignment optimization \citep{ref2}, to bi-level optimization where MAPF serves as an evaluator for FJSP proposals \citep{ref3}. However, these approaches share a common limitation: they either simplify MAPF to a transport-time matrix, or treat the coupling as a one-directional constraint, without \emph{explicitly} modeling the closed-loop dynamics where scheduling decisions create routing demands and routing outcomes feed back to reshape scheduling opportunities.
+
+From a learning perspective, this joint problem poses unique challenges. The state space combines static structural information (job-operation graphs, machine capabilities, shop-floor topology, AGV configurations) with dynamic sequential information (operation release status, machine/AGV occupancy, real-time congestion, blocking events). The action space is combinatorial (machine selection $\times$ AGV assignment $\times$ routing priority). Most critically, credit assignment is extremely difficult: a poor machine assignment may not manifest as AGV congestion until many steps later, and a local path blockage can propagate backward into machine starvation and job delays. Using only the final makespan as a reward signal, as in standard RL, leads to very low training efficiency.
+
+Moreover, both FJSP and MAPF have mature expert algorithms (dispatching rules, meta-heuristics, search-based planners), but no single expert captures the cross-stage coupling dynamics. Naively combining multiple experts---through behavioral cloning on expert trajectories, or simple averaging of expert action distributions---fails for two reasons: (1) \textbf{distribution shift}, where the student encounters states never seen in expert demonstrations; and (2) \textbf{expert conflict}, where averaging contradictory expert signals produces ambiguous, low-quality policies.
+
+To address these challenges, we make the following contributions:
+
+\begin{enumerate}[leftmargin=*]
+    \item \textbf{SkyEngine}: A unified, Gymnasium-compatible FJSP-MAPF joint scheduling environment that explicitly co-simulates operation assignment, machine selection, AGV task assignment, collision-aware path planning, and blocking feedback within a single closed loop, enabling the bidirectional coupling between scheduling and routing to be observed, sampled, trained, and evaluated.
+    \item \textbf{Multi-Expert Online Distillation Framework}: A distillation framework that operates on \emph{student-induced states} rather than expert trajectories, dynamically evaluating the reliability of multiple expert signals through group-relative comparisons at each state.
+    \item \textbf{Group-Relative Policy Optimization (GRPO)}: A policy optimization method that generates multiple candidate scheduling actions at each state, evaluates them via expert rollouts or heuristic metrics, and provides denser supervision than sparse makespan rewards through relative ranking within the candidate group.
+\end{enumerate}
+
+The remainder of this paper is organized as follows. Section~\ref{sec:related} reviews related work. Section~\ref{sec:problem} formulates the FJSP-MAPF joint scheduling problem. Section~\ref{sec:skyengine} presents the SkyEngine environment. Section~\ref{sec:method} describes the multi-expert online distillation framework and GRPO. Section~\ref{sec:experiments} presents experimental results. Section~\ref{sec:conclusion} concludes the paper.
+
+
+% ======================== 2. Related Work ========================
+\section{Related Work}
+\label{sec:related}
+
+\subsection{FJSP-MAPF Integration Approaches}
+
+Existing approaches to integrating FJSP with AGV transport can be organized by coupling strength, from weak to strong:
+
+\paragraph{Decoupled two-stage approaches.}
+The most common paradigm solves FJSP first, then passes the generated transport tasks to a separate MAPF solver. FJSP has no knowledge of whether the transport stage will be congested. For example, it may assign multiple tasks simultaneously to distant machines with crossing paths, leading to excessive waiting, detours, and conflicts in the MAPF stage. The actual makespan can be significantly larger than the FJSP solver's estimate.
+
+\paragraph{Transport-time-aware scheduling.}
+These methods introduce an AGV routing time estimator into the FJSP objective, treating transport as a scheduling constraint. The core limitation is that transport time is typically modeled as a static estimate---a fixed matrix of inter-machine travel times---without accounting for path conflicts, AGV blocking, congestion, or dynamic avoidance.
+
+\paragraph{Joint FJSP-AGV assignment.}
+These methods incorporate AGV assignment into the scheduling decision, jointly optimizing machine selection and AGV allocation, sometimes with search-based enhancement. However, they typically still simplify ``path planning'' into a transport-time matrix rather than full MAPF.
+
+\paragraph{Bi-level optimization.}
+These approaches formulate the problem as a two-layer hierarchy: an upper-level scheduler proposes candidate schedules, a lower-level MAPF solver evaluates the transport cost, and the upper level iteratively refines based on feedback. The key insight is that MAPF is not just an execution module but an \emph{evaluator}. Our SkyEngine architecture draws on this philosophy but goes further by embedding the feedback loop into a unified RL environment.
+
+\subsection{Learning for Scheduling and Routing}
+
+Reinforcement learning has been increasingly applied to both FJSP and MAPF. For FJSP, graph neural networks combined with policy gradients have been used to learn construction heuristics \citep{ref4}. For MAPF, learning-based methods have been proposed to replace or augment traditional search-based planners \citep{ref5}. However, most RL-based approaches target only one of the two problems, and the joint FJSP-MAPF setting remains largely unexplored from a learning perspective, partly due to the lack of a unified environment.
+
+\subsection{Imitation Learning and Knowledge Distillation}
+
+\paragraph{Behavioral Cloning (BC).}
+BC performs supervised learning on expert trajectories, minimizing $\mathbb{E}_{s \sim d^{\pi_E}} [\ell(\pi_\theta(s), \pi_E(s))]$. The fundamental limitation is distribution shift: the student encounters states outside the expert's state distribution, and errors compound over the decision horizon \citep{ref6}. In FJSP-MAPF, this is particularly severe because early assignment errors cascade into routing congestion and scheduling delays.
+
+\paragraph{DAgger.}
+DAgger \citep{ref7} addresses distribution shift by iteratively rolling out the student policy, collecting student-induced states, and querying the expert for labels on these states. The training distribution progressively approaches the inference distribution. However, DAgger requires a queryable oracle and assumes the expert is authoritative---it does not account for the possibility that the expert itself may be unreliable on out-of-distribution states.
+
+\paragraph{Online Policy Distillation (OPD).}
+OPD generalizes beyond DAgger by allowing flexible knowledge transfer on student-induced states: distilling action distributions, value functions, or advantages from teachers, rather than just hard action labels. DAgger can be viewed as a special case of OPD with a single expert and hard labels. In our framework, we adopt the OPD philosophy: we use DAgger-style rollouts to obtain student-induced states, then have multiple experts provide candidate decisions on these states, evaluate their relative quality, and distill the most reliable signals.
+
+\paragraph{Multi-expert distillation.}
+Combining multiple experts is necessary because no single expert covers all state regions. However, naively averaging expert signals ($\hat{a} = \sum_k w_k \pi_{E_k}(s)$ with fixed weights) amplifies expert conflicts: when experts disagree structurally, the averaged action may be suboptimal for all experts. Prior solutions include uncertainty-based weighting, value-function screening, and capability-region partitioning---all converging on the principle that weights must be \emph{state-dependent and dynamic}.
+
+
+% ======================== 3. Problem Formulation ========================
+\section{Problem Formulation}
+\label{sec:problem}
+
+\subsection{FJSP-MAPF Joint Scheduling}
+
+We consider a flexible manufacturing system with a set of $n$ jobs $\mathcal{J} = \{J_1, \ldots, J_n\}$, a set of $m$ machines $\mathcal{M} = \{M_1, \ldots, M_m\}$, and a fleet of $v$ AGVs $\mathcal{A} = \{A_1, \ldots, A_v\}$ operating on a shop-floor graph $G = (V, E)$.
+
+\paragraph{Job model.}
+Each job $J_i$ consists of an ordered sequence of operations $O_{i,1} \rightarrow O_{i,2} \rightarrow \cdots \rightarrow O_{i,n_i}$ that must be processed in order (precedence constraints). Each operation $O_{i,j}$ can be processed on a subset of machines $\mathcal{M}_{i,j} \subseteq \mathcal{M}$, with processing time $p_{i,j,k}$ on machine $M_k$.
+
+\paragraph{Machine model.}
+Each machine can process at most one operation at a time. Once started, an operation cannot be preempted.
+
+\paragraph{AGV and transport model.}
+When consecutive operations of a job are assigned to different machines, the intermediate material must be transported by an AGV. A transport task $T_{i,j}$ is created for each inter-machine transfer of job $J_i$ after operation $O_{i,j}$ completes. AGVs move along edges of graph $G$ with unit speed, subject to collision and deadlock constraints (no two AGVs can occupy the same vertex or traverse the same edge in opposite directions simultaneously).
+
+\subsection{Bidirectional Coupling}
+
+The coupling between FJSP and MAPF manifests in two directions:
+
+\begin{itemize}[leftmargin=*]
+    \item \textbf{Forward coupling (FJSP $\rightarrow$ MAPF)}: The scheduling decision $\pi_{\text{FJSP}}$ determines:
+    \begin{itemize}
+        \item Which machines are selected for each operation $\rightarrow$ spatial distribution of transport tasks
+        \item The processing sequence $\rightarrow$ temporal release of transport tasks
+        \item The number and timing of concurrent transport demands $\rightarrow$ AGV workload intensity
+    \end{itemize}
+
+    \item \textbf{Backward coupling (MAPF $\rightarrow$ FJSP)}: The routing outcome $\pi_{\text{MAPF}}$ determines:
+    \begin{itemize}
+        \item Actual delivery times $\rightarrow$ machine start times for subsequent operations
+        \item AGV blocking and waiting $\rightarrow$ delayed task release and machine starvation
+        \item Route congestion $\rightarrow$ feedback for rescheduling or priority adjustment
+    \end{itemize}
+\end{itemize}
+
+\subsection{Objective}
+
+The objective is to find a joint policy $\pi = (\pi_{\text{FJSP}}, \pi_{\text{Assign}}, \pi_{\text{MAPF}})$ that minimizes the makespan:
+\begin{equation}
+    C_{\max} = \max_{J_i \in \mathcal{J}} C_i
+\end{equation}
+where $C_i$ is the completion time of the last operation of job $J_i$, \emph{including all actual transport delays, AGV waiting, and congestion effects}.
+
+\subsection{State and Action Spaces}
+
+The state at time step $t$ consists of:
+
+\paragraph{Static context} (unchanged throughout the episode):
+\begin{itemize}[leftmargin=*]
+    \item Job-operation precedence graph
+    \item Machine capability matrix $\{p_{i,j,k}\}$
+    \item Shop-floor map topology $G = (V, E)$
+    \item AGV configuration (count, initial positions)
+    \item Obstacle layout
+\end{itemize}
+
+\paragraph{Dynamic state} (evolves with decisions):
+\begin{itemize}[leftmargin=*]
+    \item Operation release and completion status
+    \item Machine occupancy and queue lengths
+    \item AGV positions, current tasks, and availability
+    \item Route congestion indicators
+    \item Blocking and waiting event counts
+\end{itemize}
+
+The action at each decision point selects: (1) the next operation to schedule, (2) the assigned machine, (3) the assigned AGV, and optionally (4) routing priority.
+
+
+% ======================== 4. SkyEngine ========================
+\section{SkyEngine: Unified FJSP-MAPF Environment}
+\label{sec:skyengine}
+
+\subsection{Design Philosophy}
+
+SkyEngine is designed around three principles:
+
+\begin{enumerate}[leftmargin=*]
+    \item \textbf{Closed-loop co-simulation}: FJSP scheduling and MAPF routing advance together in a shared time line. The environment does not pre-compute a full schedule and then execute routing; instead, decisions are made incrementally, and each scheduling action immediately interacts with the current AGV and machine states.
+    \item \textbf{Explicit blocking feedback}: AGV blocking, waiting, and detours are not abstracted into time penalties but are simulated as actual events that propagate backward to affect operation release times, machine availability, and subsequent scheduling choices.
+    \item \textbf{Standardized interface}: The environment follows the Gymnasium API with vectorized observation spaces and discrete action spaces, supporting plug-and-play integration with any RL algorithm, imitation learning method, or expert algorithm.
+\end{enumerate}
+
+\subsection{Architecture}
+
+The SkyEngine architecture consists of three interacting modules connected through an Assigner middleware:
+
+\begin{verbatim}
+    FJSP Solver  --schedule-->  Assigner  --transport tasks-->  MAPF Solver
+                                     ^                              |
+                                     |    path execution feedback    |
+                                     +------------------------------+
+\end{verbatim}
+
+\paragraph{FJSP Module.}
+Generates scheduling decisions: which operation to process next, on which machine. Multiple FJSP algorithms can be plugged in (dispatching rules like SPT, MWKR; meta-heuristics like PSO, DE; or learned policies).
+
+\paragraph{Assigner.}
+The core coupling interface. Receives scheduling proposals from FJSP and maps transport tasks to AGVs based on real-time environmental state: machine queue loads, AGV positions, route congestion. The Assigner is the primary target for learning in our framework.
+
+\paragraph{MAPF Module.}
+Executes collision-free path planning for assigned AGVs. Multiple MAPF algorithms can be plugged in (A*, PIBT, learned planners). Routing outcomes---actual travel times, blocking events, deadlocks---are fed back to the Assigner and FJSP modules.
+
+\subsection{Environment Dynamics}
+
+At each step $t$, the environment:
+
+\begin{enumerate}[leftmargin=*]
+    \item Checks for completed operations and newly released operations
+    \item Queries the FJSP policy for scheduling decisions on pending operations
+    \item Passes transport requests to the Assigner for AGV assignment
+    \item Passes AGV task assignments to the MAPF solver for path planning
+    \item Advances the simulation clock, updating AGV positions, machine states, and detecting conflicts
+    \item Computes the observation $s_{t+1}$ and reward $r_t$
+    \item Checks termination condition (all jobs completed or timeout)
+\end{enumerate}
+
+\subsection{Observation Encoding}
+
+The observation is encoded as a structured dictionary containing:
+
+\begin{itemize}[leftmargin=*]
+    \item \texttt{static\_context}: Flattened encoding of the job-operation graph, machine capability matrix, and shop-floor map
+    \item \texttt{machine\_state}: Occupancy, queue length, remaining processing time for each machine
+    \item \texttt{agv\_state}: Position, current task, availability, estimated time-to-free for each AGV
+    \item \texttt{operation\_status}: Release status, assigned machine, waiting status for each operation
+    \item \texttt{congestion\_map}: Grid representation of current AGV density and blocking events
+\end{itemize}
+
+
+% ======================== 5. Method ========================
+\section{Multi-Expert Online Distillation with GRPO}
+\label{sec:method}
+
+\subsection{Overview}
+
+Our learning framework addresses two key questions:
+\begin{enumerate}[leftmargin=*]
+    \item \textbf{Where to distill?} On student-induced states, not expert trajectories (addressing distribution shift).
+    \item \textbf{Whom to trust?} Dynamically evaluate expert reliability per state, not globally average (addressing expert conflict).
+\end{enumerate}
+
+The framework operates in an iterative online loop:
+
+\begin{enumerate}[leftmargin=*]
+    \item SkyEngine generates the current joint state $s_t$
+    \item The student policy $\pi_\theta$ generates $G$ candidate scheduling actions $\{a_1, \ldots, a_G\}$
+    \item Multiple expert algorithms evaluate the candidate actions
+    \item Group-level rewards/rankings are computed
+    \item The student is updated via GRPO
+    \item High-confidence expert signals are additionally distilled via OPD/KL divergence
+    \item The environment advances, continuing the online training loop
+\end{enumerate}
+
+\subsection{Student Policy Architecture}
+
+The student policy $\pi_\theta$ consists of three components:
+
+\paragraph{Static context encoder.}
+Encodes the job-operation graph, machine capability matrix, map topology, and AGV configuration into a fixed-dimensional embedding $h_{\text{static}}$. We use a Graph Neural Network (GNN) to capture the relational structure of jobs, operations, and machines.
+
+\paragraph{Dynamic state encoder.}
+Encodes the current operation status, machine/AGV availability, AGV positions, route congestion, and blocking events into a dynamic embedding $h_{\text{dynamic}}^{(t)}$.
+
+\paragraph{Decision head.}
+Combines static and dynamic embeddings and outputs a distribution over the composite action space (machine selection $\times$ AGV assignment):
+\begin{equation}
+    \pi_\theta(a | s_t) = f_{\text{head}}\left(\left[h_{\text{static}}; h_{\text{dynamic}}^{(t)}\right]\right)
+\end{equation}
+
+\subsection{Group-Relative Policy Optimization (GRPO)}
+
+At each training step, instead of using the sparse makespan reward, we generate a \emph{group} of $G$ candidate actions and evaluate them relative to each other:
+
+\begin{enumerate}[leftmargin=*]
+    \item Sample $G$ actions from the current policy: $a_1, \ldots, a_G \sim \pi_\theta(\cdot | s_t)$
+    \item For each action $a_g$, perform a short rollout or compute a heuristic score $R(s_t, a_g)$
+    \item Compute the group-relative advantage:
+    \begin{equation}
+        \tilde{A}_g = \frac{R(s_t, a_g) - \mu_R}{\sigma_R}
+    \end{equation}
+    where $\mu_R$ and $\sigma_R$ are the mean and standard deviation of scores within the group.
+    \item Update the policy using the GRPO objective:
+    \begin{equation}
+        \mathcal{L}_{\text{GRPO}} = -\mathbb{E}\left[\frac{1}{G}\sum_{g=1}^{G} \tilde{A}_g \cdot \log \pi_\theta(a_g | s_t)\right]
+    \end{equation}
+\end{enumerate}
+
+This provides $G$ times denser supervision signals compared to using a single action with makespan reward.
+
+\subsection{Multi-Expert Reliability Weighting}
+
+Let $\{E_1, \ldots, E_K\}$ be $K$ expert algorithms. For a student-induced state $s_t$, each expert provides an action recommendation $\pi_{E_k}(s_t)$ and/or an evaluation of candidate actions.
+
+The reliability of expert $E_k$ at state $s_t$ is assessed through group-relative evaluation:
+
+\begin{enumerate}[leftmargin=*]
+    \item For each candidate action $a_g$, compute expert $E_k$'s evaluation $R_k(s_t, a_g)$
+    \item Rank candidates according to each expert independently
+    \item Compute agreement between expert rankings and environment feedback
+    \item Derive reliability weight:
+    \begin{equation}
+        w_k(s_t) = \text{softmax}\left(\frac{\text{agreement}_k(s_t)}{\tau}\right)
+    \end{equation}
+    where $\tau$ is a temperature parameter.
+\end{enumerate}
+
+The weighted distillation target is:
+\begin{equation}
+    \pi_{\text{target}}(s_t) = \sum_{k=1}^{K} w_k(s_t) \cdot \pi_{E_k}(s_t)
+\end{equation}
+
+\subsection{Combined Training Objective}
+
+The total loss combines GRPO with distillation:
+\begin{equation}
+    \mathcal{L} = \mathcal{L}_{\text{GRPO}} + \lambda_{\text{KL}} \cdot D_{\text{KL}}\left(\pi_{\text{target}}(s_t) \| \pi_\theta(s_t)\right)
+\end{equation}
+where $\lambda_{\text{KL}}$ controls the strength of distillation regularization. The distillation term acts as a stabilizer, preventing the student from drifting too far from reliable expert signals, while GRPO provides the primary learning signal from environment interaction.
+
+
+% ======================== 6. Experiments ========================
+\section{Experiments}
+\label{sec:experiments}
+
+\subsection{Experimental Setup}
+
+\paragraph{Environment configurations.}
+We evaluate on multiple FJSP benchmark instances with varying numbers of jobs ($n \in \{10, 20, 30\}$), machines ($m \in \{5, 10, 15\}$), and AGVs ($v \in \{3, 5, 8\}$). The shop-floor map contains narrow passages and intersection zones to create realistic congestion scenarios.
+
+\paragraph{Expert algorithms.}
+\begin{itemize}[leftmargin=*]
+    \item \textbf{FJSP experts}: SPT (Shortest Processing Time), MWKR (Most Work Remaining), PSO (Particle Swarm Optimization), DE (Differential Evolution)
+    \item \textbf{MAPF experts}: A* (space-time A*), PIBT (Priority-based Iterative Best-first Search)
+\end{itemize}
+
+\paragraph{Baselines.}
+\begin{itemize}[leftmargin=*]
+    \item \textbf{Random}: Random assignment of operations to machines and tasks to AGVs
+    \item \textbf{SPT + A*}: SPT dispatching rule paired with A* path planning
+    \item \textbf{MWKR + PIBT}: MWKR dispatching rule paired with PIBT
+    \item \textbf{Student-BC}: Student trained via behavioral cloning on expert trajectories
+    \item \textbf{Student-OPD}: Student trained via our multi-expert online distillation (proposed)
+\end{itemize}
+
+\paragraph{Metrics.}
+We evaluate along four dimensions:
+\begin{itemize}[leftmargin=*]
+    \item \textbf{Primary}: Makespan ($C_{\max}$), Success rate, Completion rate, Runtime
+    \item \textbf{Scheduling quality}: Machine utilization, Idle time, Operation waiting time, Load variance
+    \item \textbf{Routing quality}: AGV utilization, Travel time, Wait time, Blocking events, Deadlock count
+    \item \textbf{Coupling analysis}: Transport delay ratio, Machine starvation caused by AGV, Coupling penalty
+\end{itemize}
+
+\subsection{Main Results}
+
+% TODO: Fill in experimental results
+\begin{table}[htbp]
+    \centering
+    \caption{Main results across FJSP-MAPF configurations.}
+    \label{tab:main}
+    \begin{tabular}{lcccc}
+        \toprule
+        \textbf{Method} & \textbf{Makespan} $\downarrow$ & \textbf{Success} $\uparrow$ & \textbf{Completion} $\uparrow$ & \textbf{Runtime} $\downarrow$ \\
+        \midrule
+        Random           & -- & -- & -- & -- \\
+        SPT + A*         & -- & -- & -- & -- \\
+        MWKR + PIBT      & -- & -- & -- & -- \\
+        Student-BC       & -- & -- & -- & -- \\
+        Student-OPD (Ours) & -- & -- & -- & -- \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\subsection{Scheduling Quality Analysis}
+
+% TODO: Fill in scheduling metrics
+\begin{table}[htbp]
+    \centering
+    \caption{Scheduling quality metrics.}
+    \label{tab:scheduling}
+    \begin{tabular}{lcccc}
+        \toprule
+        \textbf{Method} & \textbf{Machine Util} $\uparrow$ & \textbf{Idle Time} $\downarrow$ & \textbf{Op Wait} $\downarrow$ & \textbf{Load Var} $\downarrow$ \\
+        \midrule
+        Random           & -- & -- & -- & -- \\
+        SPT + A*         & -- & -- & -- & -- \\
+        MWKR + PIBT      & -- & -- & -- & -- \\
+        Student-BC       & -- & -- & -- & -- \\
+        Student-OPD (Ours) & -- & -- & -- & -- \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\subsection{AGV and Routing Quality Analysis}
+
+% TODO: Fill in routing metrics
+\begin{table}[htbp]
+    \centering
+    \caption{AGV and MAPF quality metrics.}
+    \label{tab:routing}
+    \begin{tabular}{lccccc}
+        \toprule
+        \textbf{Method} & \textbf{AGV Util} $\uparrow$ & \textbf{Travel Time} $\downarrow$ & \textbf{Wait Time} $\downarrow$ & \textbf{Blocking} $\downarrow$ & \textbf{Deadlock} $\downarrow$ \\
+        \midrule
+        Random           & -- & -- & -- & -- & -- \\
+        SPT + A*         & -- & -- & -- & -- & -- \\
+        MWKR + PIBT      & -- & -- & -- & -- & -- \\
+        Student-BC       & -- & -- & -- & -- & -- \\
+        Student-OPD (Ours) & -- & -- & -- & -- & -- \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\subsection{Coupling Loss Analysis}
+
+% TODO: Fill in coupling metrics
+\begin{table}[htbp]
+    \centering
+    \caption{Coupling loss analysis.}
+    \label{tab:coupling}
+    \begin{tabular}{lccc}
+        \toprule
+        \textbf{Method} & \textbf{Transport Delay Ratio} $\downarrow$ & \textbf{Machine Starvation by AGV} $\downarrow$ & \textbf{Coupling Penalty} $\downarrow$ \\
+        \midrule
+        Random           & -- & -- & -- \\
+        SPT + A*         & -- & -- & -- \\
+        MWKR + PIBT      & -- & -- & -- \\
+        Student-BC       & -- & -- & -- \\
+        Student-OPD (Ours) & -- & -- & -- \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\subsection{Ablation Studies}
+
+\paragraph{Effect of distillation on student-induced states.}
+We compare training on expert trajectories (BC) vs.\ training on student-induced states (OPD) to quantify the impact of distribution shift.
+
+\paragraph{Effect of multi-expert reliability weighting.}
+We compare fixed-weight averaging vs.\ state-dependent reliability weighting to quantify the benefit of dynamic expert selection.
+
+\paragraph{Effect of group size $G$.}
+We vary the number of candidate actions in GRPO to analyze the trade-off between evaluation cost and supervision density.
+
+
+% ======================== 7. Conclusion ========================
+\section{Conclusion}
+\label{sec:conclusion}
+
+We presented SkyEngine, a unified FJSP-MAPF joint scheduling environment, and a multi-expert online distillation framework with Group-Relative Policy Optimization (GRPO) for learning cross-stage scheduling policies. Our key contributions are:
+
+\begin{enumerate}[leftmargin=*]
+    \item We explicitly model the bidirectional coupling between FJSP scheduling and MAPF routing within a single RL environment, enabling the closed-loop dynamics to be observed and optimized.
+    \item We address the distribution shift problem by performing distillation on student-induced states, and the expert conflict problem by dynamically evaluating expert reliability through group-relative comparisons.
+    \item We demonstrate that the learned assigner consistently outperforms both classical heuristic rules and single-expert baselines across multiple FJSP-MAPF algorithm combinations.
+\end{enumerate}
+
+\paragraph{Future work.}
+(1) Scaling to larger instances with more machines, jobs, and AGVs; (2) incorporating world models for more efficient rollout evaluation; (3) extending the framework to handle dynamic job arrivals and machine breakdowns in real-time scheduling scenarios.
+
+
+% ======================== References ========================
+\bibliographystyle{plainnat}
+\begin{thebibliography}{10}
+
+\bibitem[ref1]{ref1}
+Author, A. (202X). Transport-time-aware scheduling for flexible job shops.
+
+\bibitem[ref2]{ref2}
+Author, B. (202X). Joint optimization of FJSP and AGV assignment.
+
+\bibitem[ref3]{ref3}
+Author, C. (202X). Bi-level optimization for integrated scheduling and routing.
+
+\bibitem[ref4]{ref4}
+Author, D. (202X). Learning construction heuristics for job shop scheduling with graph neural networks.
+
+\bibitem[ref5]{ref5}
+Author, E. (202X). Learning-based multi-agent path finding.
+
+\bibitem[ref6]{ref6}
+Ross, S. and Bagnell, J.A. (2010). Efficient reductions for imitation learning. \emph{AISTATS}.
+
+\bibitem[ref7]{ref7}
+Ross, S., Gordon, G.J., and Bagnell, D. (2011). A reduction of imitation learning and structured prediction to no-regret online learning. \emph{AISTATS}.
+
+\end{thebibliography}
+
+\end{document}

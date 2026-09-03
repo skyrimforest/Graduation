@@ -1,0 +1,1 @@
+{"phase": "E7", "instance": "mk01", "map": "maze", "num_agv": 4, "scen": "S1", "policy": "cpsat-static", "seed": 42, "soft": true, "allowance": 200, "finished": false, "steps": 4096, "makespan": 4096, "revisions": 0, "revision_fails": 0, "partial_fallbacks": 0, "myopic_evals": 0, "myopic_replans": 0, "myopic_skips": 0, "n_events": 2, "agv_busy": 0.2117919921875, "wall_s": 5.97}

@@ -1,0 +1,54 @@
+% njuthesis 参数设置文件
+% 提醒：\njusetup 内部千万不要有空行
+
+% info 类用于录入个人信息
+\njusetup[info]{
+    title = {面向FJSP-MAPF联合调度的\\统一强化学习环境与多专家在线蒸馏框架},
+    title* = {A Unified Reinforcement Learning Environment and Multi-Expert Online Distillation Framework for FJSP-MAPF Joint Scheduling},
+    author = {吴昊},
+    author* = {WuHao},
+    keywords = {柔性作业车间调度,多智能体路径规划,联合调度,强化学习,多专家蒸馏,组相对策略优化},
+    keywords* = {FJSP,MAPF,Joint Scheduling,Reinforcement Learning,Multi-Expert Distillation,Group-Relative Policy Optimization},
+    grade = {2024},
+    student-id = {522024330094},
+    department = {计算机学院},
+    department* = {School of Computer Science},
+    major = {计算机技术},
+    major* = {Computer Technology},
+    supervisor = {导师姓名,谢磊},
+    supervisor*= {Professor XieLei},
+    submit-date = {2026-06-01},
+    degree = {专业硕士},
+    degree* = {Master of Engineering},
+    field = {智能优化与调度},
+    field* = {Intelligent Optimization and Scheduling},
+    chairman = {某某某~教授},
+    reviewer = {
+        某某某~教授,
+        某某某~教授,
+        某某某~教授,
+        某某某~教授
+    },
+    clc = {TP301.6},
+    udc = {004.4},
+    defend-date = {2026-06-10},
+    confer-date = {2026-06-20},
+    bottom-date = {2026-06-20},
+    supervisor-contact = {
+        南京大学~
+        江苏省南京市栖霞区仙林大道163号
+    }
+}
+
+% bib 类用于参考文献设置
+\njusetup[bib]{
+    resource = {njuthesis-sample.bib},
+}
+
+% abstract 类用于设置摘要样式
+\njusetup[abstract]{
+    toc-entry = false,
+}
+
+% 为目录中的章标题添加引导线
+\njusetup[tableofcontents/dotline]{chapter}

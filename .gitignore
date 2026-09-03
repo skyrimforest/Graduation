@@ -1,0 +1,31 @@
+# LaTeX 中间产物（PDF 成品保留）
+*.aux
+*.log
+*.out
+*.bbl
+*.blg
+*.bcf
+*.run.xml
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+*.toc
+*.thm
+*.lof
+*.lot
+*.nav
+*.snm
+*.vrb
+build/
+
+# 系统与编辑器
+.DS_Store
+__pycache__/
+*.pyc
+.vscode/
+.idea/
+.claude/
+.aris/
+
+# 实验大数据（证据 jsonl 除外，见 results/）
+*.pkl

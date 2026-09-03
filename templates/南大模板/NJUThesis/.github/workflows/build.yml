@@ -1,0 +1,77 @@
+name: Build
+
+on:
+  push:
+    branches:
+      - master
+
+  pull_request:
+    branches:
+      - master
+
+env:
+  CTAN_URL: https://mirrors.rit.edu/CTAN
+  PACKAGES: latexmk cleveref enumitem footmisc tex-gyre xits biblatex-gb7714-2015 biber
+
+jobs:
+  build-on-ubuntu:
+    runs-on: ubuntu-latest
+    if: "!startsWith(github.ref, 'refs/tags/v')"
+    env:
+      SET_PATH: |
+        export PATH=/tmp/texlive/bin/x86_64-linux:$PATH
+    steps:
+      - name: Set up Git repository
+        uses: actions/checkout@v6
+
+      - name: Install TeX Live
+        run: |
+          ${{ env.SET_PATH }}
+          wget ${{ env.CTAN_URL }}/systems/texlive/tlnet/install-tl-unx.tar.gz
+          tar -xzf install-tl-unx.tar.gz
+          cd install-tl-20* && ./install-tl --profile ../.github/workflows/texlive.profile
+
+      - name: Install latest njuthesis
+        run: |
+          ${{ env.SET_PATH }}
+          tlmgr option repository ${{ env.CTAN_URL }}/systems/texlive/tlnet/
+          tlmgr install xetex l3build
+          l3build install
+          cd scripts
+          bash download.sh ${{ env.CTAN_URL }}
+          cd data
+          wget https://raw.githubusercontent.com/stone-zeng/tl-depend-analysis/data/data/tl-depend.json
+          cd ..
+          python3 main.py --pkg "${{ env.PACKAGES }}" --exclude "njuthesis-doc.cls"
+          tlmgr update --self --all --no-auto-install
+
+      - name: Run regression tests
+        run: |
+          ${{ env.SET_PATH }}
+          l3build check -e xetex
+
+      - name: Compile test file
+        run: |
+          ${{ env.SET_PATH }}
+          cd test
+          latexmk -xelatex  -halt-on-error test-xetex-undergraduate
+          xelatex           -halt-on-error test-xetex-graduate
+          xelatex           -halt-on-error test-xetex-graduate-nlcover
+          # latexmk -lualatex -halt-on-error test-luatex
+
+      - name: Upload CLS Files
+        uses: actions/upload-artifact@v7
+        with:
+          name: "njuthesis-cls-${{ github.sha }}"
+          path: |
+            build/unpacked/njuthesis.cls
+            build/unpacked/*.def
+
+      - name: Upload test results if failed
+        uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: test-result
+          path: |
+            build/test
+            test

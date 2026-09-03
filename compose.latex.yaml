@@ -1,0 +1,12 @@
+services:
+  latex:
+    build:
+      context: .
+      dockerfile: latex/Dockerfile
+    image: skycausal-latex:2026
+    working_dir: /workspace
+    user: "${LATEX_UID:-1000}:${LATEX_GID:-1000}"
+    environment:
+      HOME: /tmp
+    volumes:
+      - .:/workspace

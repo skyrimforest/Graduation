@@ -1,0 +1,176 @@
+\documentclass[UTF8,12pt,a4paper]{ctexart}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{geometry}
+\usepackage{hyperref}
+\geometry{margin=2.5cm}
+\newtheorem{definition}{定义}
+\newcommand{\Cmax}{C_{\max}}
+
+\title{分层协同的分解代价：FJSP+MAPF 的\\信息损失度量、可加分解与学习引导耦合}
+\author{SkyResearch}
+\date{2026年9月1日 \quad v1 草稿}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+FJSP+MAPF 耦合系统在实践中几乎都采用分层求解（调度层—分配层—路由层），
+但分层造成的质量损失从未被系统度量。本文（1）形式化\textbf{分解代价}
+（Price of Decomposition, PoD）并给出其在``调度质量 $\times$ 路由质量''
+$2\times2$ 因子下的可加分解（纯调度损失 + 纯路由损失 + 交互项）；
+（2）把分层本质归结为接口信息损失并定义反馈价值（开启 $I_{R\to J}$
+的增益）；（3）30-episode 消融试点给出出人意料的归因结构：车队规模
+$K\ge4$ 时\textbf{路由层是结合约束}——greedy+滚动 EECBS 与
+CP-SAT+EECBS 几乎打平（452 vs 448），而任何调度器配局部 A$^*$ 都
+拥堵甚至失稳（含 CP-SAT）；交互项在低 $K$ 为负、高 $K$ 翻转为 $+193\%$
+（弱点共振）。该结果同时修正了基准篇的初步结论（调度层优势只在
+局部路由下成立），直接印证因子化评测的必要性；（4）提出学习引导
+耦合的研究设计（以拥堵特征为条件学习分配器优先序），训练留待正式阶段。
+\end{abstract}
+
+\section{引言}
+
+姊妹篇（方向1/2）建立了 I-FJSP-MAPF 规约、分层执行语义
+$\mathcal{H}=(\sigma_J,\sigma_A,\sigma_R;\ I_{\cdot\to\cdot})$ 与基准。
+本篇回答一个此前文献没有量化过的问题：\textbf{分层本身损失了多少？}
+该问题的价值在于：若 PoD 小，则应投入求解器质量；若 PoD 大且集中在
+交互项，则应投入接口（反馈信息、分配策略）——这决定研究资源的投向。
+
+\section{分解代价的形式化}\label{sec:pod}
+
+\subsection{定义}
+
+固定实例 $I$（FJSP 实例 $\times$ 地图 $\times$ 车队），设
+$C(\mathcal{H};I)$ 为执行器 $\mathcal{H}$ 的完工时间，
+$C^{\mathrm{coord}}(I)$ 为可用\textbf{协调锚点}（当前栈中为
+CP-SAT 调度 + 滚动 EECBS 路由 + 最近邻分配）的完工时间。
+\begin{equation}
+\mathrm{PoD}(\mathcal{H};I) = \frac{C(\mathcal{H};I) - C^{\mathrm{coord}}(I)}
+{C^{\mathrm{coord}}(I)}.
+\end{equation}
+
+\subsection{$2\times2$ 因子可加分解}
+
+取调度层 $\sigma_J\in\{\text{reactive (greedy)},\ \text{coordinated (CP-SAT)}\}$、
+路由层 $\sigma_R\in\{\text{local (A}^*\text{)},\ \text{global (rolling EECBS)}\}$，
+记 $C_{11},C_{12},C_{21},C_{22}$（reactive+local 为 $C_{11}$，coordinated+global
+为 $C_{22}$）。定义：
+\begin{align}
+\mathrm{PoD}_{\mathrm{total}} &= (C_{11}-C_{22})/C_{22}, \\
+\mathrm{PoD}_{\mathrm{sched}} &= (C_{21}-C_{22})/C_{22}, \qquad
+\mathrm{PoD}_{\mathrm{route}} = (C_{12}-C_{22})/C_{22}, \\
+\mathrm{Int} &= \mathrm{PoD}_{\mathrm{total}}
+- \mathrm{PoD}_{\mathrm{sched}} - \mathrm{PoD}_{\mathrm{route}}.
+\end{align}
+$\mathrm{Int}\ne 0$ 意味着两层的损失不独立——正是``接口''所在。
+基准试点已给出交互项非平凡的证据（贪心调度仅在局部路由下可运行，
+全局路由下反而触发重规划风暴/自阻塞）。
+
+\subsection{接口信息损失与反馈价值}
+
+调度层在时刻 $t$ 可用的运输时间信息为估计器
+$\hat{T}_t = \mathrm{BFS} + \alpha_t\cdot\mathrm{feedback}$，
+真实到达时刻 $T^{\mathrm{true}}_t$ 由路由层在拥堵下实现。
+定义\textbf{反馈价值}：
+\begin{equation}
+\mathrm{FB}(I) = \frac{C(\sigma_J \mid \hat{T}_0) - C(\sigma_J\mid \hat{T}_t)}
+{C(\sigma_J\mid \hat{T}_t)},
+\end{equation}
+其中 $\hat{T}_0$ 为无反馈（纯 BFS）。FB 是接口 $I_{R\to J}$ 的信息价值
+的可观测代理。
+
+\section{学习引导耦合：研究设计}\label{sec:learn}
+
+\textbf{观察}（方向2试点）：分配器与 $(K,\text{地图})$ 存在显著交互，
+静态分配规则（最近邻/匈牙利）在不同区间排序反转；滚动路由客户端在
+``贪心任务流 $\times$ 走廊地图''下失稳。这提示耦合变量（谁先被服务、
+谁绕行）应是\textbf{状态的函数}而非静态规则。
+
+\textbf{方法设计}（训练留待正式实验）：以分配器优先序为可学习对象：
+状态特征 $s_t$ = 机器队列长度、AGV 空间分布熵、路网占用率、任务紧急度
+分布；动作 = 运输任务的优先级排序（组合动作，用指针网络/排序策略）；
+奖励 = $-\Delta\Cmax$（episode 级信用分配用 GNN 值函数或 Hindsight）。
+安全约束：优先序只影响分配次序，可行性由路由层保证（策略类天然安全）。
+对照：RL-RH-PP（MAPF 侧学优先序）为本设计在路由层的镜像，二者构成
+``学习引导分层协同''的完整议程。
+
+\section{试点实验（消融）}\label{sec:pilot}
+
+\textbf{设计}：$\{$mk01, mk02$\}\times$迷宫$\times K\in\{2,4,6\}\times$五臂
+$\{$greedy+astar, greedy+astar-nofb, greedy+eecbs, cpsat+astar,
+cpsat+eecbs$\}$，30 episode，进程级硬超时 180s（1 格超时）。
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lrrrrrr}
+\toprule
+ & \multicolumn{3}{c}{mk01} & \multicolumn{3}{c}{mk02} \\
+臂 & $K{=}2$ & $K{=}4$ & $K{=}6$ & $K{=}2$ & $K{=}4$ & $K{=}6$ \\
+\midrule
+greedy+astar       & 908 & 1099 & 4096$^\dagger$ & 731 & 4096$^\dagger$ & 3817 \\
+greedy+astar-nofb  & 1123 & 1260 & 4096$^\dagger$ & 1136 & 2330 & 3904 \\
+greedy+eecbs       & \textbf{763} & 430 & 452 & 806 & T/O & \textbf{424} \\
+cpsat+astar        & 1441 & 1439 & 4096$^\dagger$ & 993 & 3310 & 2996 \\
+cpsat+eecbs        & 829 & \textbf{408} & \textbf{448} & \textbf{707} & \textbf{410} & 425 \\
+\bottomrule
+\end{tabular}
+\caption{消融 makespan（步）。$\dagger$：4096 步未完工（活性失稳）；
+T/O：180s 硬超时。}
+\label{tab:decompmain}
+\end{table}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lrrrr}
+\toprule
+实例 & $K$ & $\mathrm{PoD}_{\mathrm{total}}$ & $\mathrm{PoD}_{\mathrm{sched}}$ & 交互项 \\
+\midrule
+mk01 & 2 & $+10\%$ & $+74\%$ & $-56\%$ \\
+mk01 & 4 & $+169\%$ & $+253\%$ & $-89\%$ \\
+mk02 & 2 & $+3\%$ & $+40\%$ & $-51\%$ \\
+mk02 & 6 & $+798\%$ & $+605\%$ & $+193\%$ \\
+\bottomrule
+\end{tabular}
+\caption{PoD 分解（以 cpsat+eecbs 为锚点；反馈价值在
+greedy+astar 上为 $+2\%\sim+55\%$，低 $K$ 时更大）。}
+\label{tab:pod}
+\end{table}
+
+\textbf{发现}：
+\begin{enumerate}
+  \item \textbf{路由层是中高车队下的结合约束}（表\ref{tab:decompmain}）：
+    $K\ge4$ 时 greedy+eecbs 与 cpsat+eecbs \emph{几乎打平}
+    （452 vs 448；424 vs 425）——一旦路由升级为全局滚动搜索，
+    调度器质量退居二阶；反之任何调度器（含 CP-SAT）配局部 A$^*$
+    在高 $K$ 都拥堵甚至失稳（cpsat+astar 在 mk01$K{=}6$ 也 4096$^\dagger$）；
+  \item \textbf{交互项符号翻转}（表\ref{tab:pod}）：低 $K$ 时交互为负
+    （两层的弱点互相掩盖），mk02$K{=}6$ 时交互 $+193\%$（弱点共振：
+    局部路由 $\times$ 名义计划的任务释放节律形成堵塞）；
+  \item \textbf{反馈价值为正但有限}：运输时间反馈（BFS+实测）在
+    低 $K$ 给 greedy+astar 带来 $+15\%\sim+55\%$，高 $K$ 下两层都拥堵时失效；
+  \item \textbf{对基准篇结论的修正}：基准中``CP-SAT 比 greedy 好
+    38--49\%''的结论\emph{只在局部路由下成立}——补上路由轴后，
+    归因翻转为``路由质量主导''。这正是一次性配置评测会误判、
+    因子化评测必要性的直接证据（基准篇论点的自我印证）。
+\end{enumerate}
+
+\section{正式实验计划}
+
+实例族扩展至 mk01--mk10 $\times$ 两地图 $\times K\in\{2,4,6,8\}$ $\times$
+3 种子 $\approx$ 300 episode（消融五臂）；学习引导耦合的训练管线
+（指针网络 + PPO，约 100k episode 交互）需 GPU，另列预算。
+[FULL\_RUN\_PLACEHOLDER] [TRAIN\_PLACEHOLDER]
+
+\section{结论}
+
+本篇给出分层协同的质量损失的严格度量（PoD 及其可加分解）、接口信息
+价值的可观测代理（FB），并以基准证据说明交互项不可忽略；据此提出学习
+引导耦合的完整研究设计。代码见 \texttt{sky\_research} 分支
+\texttt{0901decomp}。
+
+\bibliographystyle{plain}
+\bibliography{references_decomp}
+
+\end{document}

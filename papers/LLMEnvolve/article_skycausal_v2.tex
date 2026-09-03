@@ -1,0 +1,1033 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[margin=2.4cm]{geometry}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\usepackage{graphicx}
+\usepackage{subcaption}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{natbib}
+\usepackage{hyperref}
+\graphicspath{{../codebase/SkyEngine/experiment/skycausal/figures/}}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!65!black,
+    citecolor=blue!65!black,
+    urlcolor=blue!65!black
+}
+
+\newcommand{\method}{SkyCausal}
+\newcommand{\algo}{CBQ-IQL}
+\newcommand{\cmax}{C_{\max}}
+\newcommand{\cvar}{\operatorname{CVaR}}
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\Var}{\operatorname{Var}}
+\newcommand{\doop}{\operatorname{do}}
+\newcommand{\todo}[1]{\textcolor{red}{[TODO: #1]}}
+
+\title{\textbf{SkyCausal: Budgeted Causal Intervention Learning for\\
+Rolling-Horizon FJSP--MAPF Scheduling under Path-Execution Uncertainty}}
+
+\author{Hao Wu \and \todo{Co-authors}}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Flexible job-shop scheduling with robot transportation requires decisions over
+operation sequencing, machine assignment, vehicle assignment, and
+collision-free path execution. Existing approaches either replace transportation
+with a static travel-time matrix or repeatedly invoke an expensive path planner
+without asking when its information can change the production decision. This
+paper studies a new \emph{budgeted intervention} problem: given a limited budget
+of high-fidelity multi-agent path finding (MAPF) queries and rolling-horizon
+rescheduling operations, when should a scheduler intervene, at what granularity,
+and how should path-execution uncertainty alter machine and operation decisions?
+We propose \method, a closed-loop framework that combines a
+domain-constrained dynamic Bayesian causal model with budget-conditioned,
+risk-sensitive offline reinforcement learning. The causal model represents how
+transport demand and route competition propagate through delivery delay,
+machine starvation, and production critical paths. Randomized interventions in
+the simulator enable doubly robust estimation of heterogeneous effects for MAPF
+queries, AGV reassignment, partial rescheduling, and joint rescheduling.
+The resulting posterior effect distributions guide \algo, a conservative
+quantile implicit Q-learning policy that minimizes expected and tail makespan
+subject to non-discounted computation budgets. A deterministic MAPF safety layer
+retains collision-free execution. We define an evaluation protocol covering
+causal identification, calibration, compute-quality Pareto efficiency, mediation
+analysis, and generalization to unseen maps, fleet sizes, and congestion
+mechanisms. \todo{Insert numerical results only after the preregistered
+experiments are complete.}
+\end{abstract}
+
+\noindent\textbf{Keywords:}
+flexible job-shop scheduling; multi-agent path finding; causal inference;
+dynamic Bayesian network; offline reinforcement learning; risk-sensitive
+scheduling; rolling-horizon optimization
+
+\section{Introduction}
+\label{sec:introduction}
+
+Flexible manufacturing systems couple production planning with material
+transportation. A flexible job-shop scheduling problem (FJSP) assigns each
+operation to a compatible machine and orders operations on shared machines.
+When consecutive operations use different machines, an automated guided vehicle
+(AGV) or autonomous mobile robot must transport the material through a shared
+shop-floor network. The transportation layer is therefore not an independent
+post-processing step: machine choices determine where and when traffic is
+generated, while route conflicts determine when materials actually reach the
+machines.
+
+The literature has progressively moved from fixed transportation times to
+joint vehicle scheduling and conflict-aware routing
+\citep{berterottiere2024,sun2023,leet2025,li2026,moinuddin2026}.
+However, two extremes remain common. A weakly coupled scheduler uses a static
+shortest-path matrix and systematically underestimates delay under congestion.
+A tightly coupled scheduler repeatedly invokes a high-fidelity MAPF solver and
+reoptimizes the production schedule, which may be computationally prohibitive
+in a dynamic factory. Neither extreme answers a central operational question:
+\emph{when is an expensive path query or rescheduling intervention worth its
+cost?}
+
+This question cannot be answered reliably by correlation alone. Historical
+logs call the expensive solver more often in difficult states; consequently,
+naive regression may associate intervention with poor outcomes even when the
+intervention is beneficial. In addition, a locally shorter transport does not
+necessarily reduce the final makespan unless the saved time propagates to a
+starved machine and then to the production critical path. The relevant quantity
+is thus a heterogeneous, system-level causal effect rather than a travel-time
+prediction:
+\begin{equation}
+    \tau_u(s)
+    =
+    \E\!\left[
+        \cmax^{(0)}-\cmax^{(u)}
+        \mid S_t=s
+    \right],
+    \label{eq:cate_intro}
+\end{equation}
+where \(u\) is a scheduling or routing intervention and \(0\) denotes no
+intervention.
+
+Risk is equally important. Vertex conflicts, narrow corridors, and synchronized
+task releases create long-tailed transport delays. A method that improves mean
+makespan while increasing timeout or deadlock probability is unsuitable for
+production. The decision must therefore account for a return distribution, not
+only its expectation, while respecting explicit budgets on MAPF calls,
+rescheduling calls, and wall-clock time.
+
+We formulate this setting as the \emph{Budgeted Causal FJSP--MAPF
+Intervention Problem}. Its distinctive decision is not the low-level motion of
+every robot. Instead, a high-level policy chooses among no intervention, a
+high-fidelity MAPF query, AGV reassignment, partial production rescheduling, and
+joint rolling-horizon rescheduling. Collision-free execution remains the
+responsibility of a deterministic planning layer.
+
+We propose \method, with the following intended contributions:
+
+\begin{enumerate}[leftmargin=*]
+    \item \textbf{Budgeted causal problem formulation.}
+    We formalize selective MAPF evaluation and rolling rescheduling as
+    sequential interventions with heterogeneous computational costs. The
+    objective jointly controls expected makespan, tail risk, and non-discounted
+    query budgets.
+
+    \item \textbf{Cross-layer Bayesian causal model.}
+    We introduce a domain-constrained dynamic Bayesian network that represents
+    the mechanism from route demand and bottleneck occupancy to delivery delay,
+    machine starvation, critical-path extension, and terminal makespan. Its
+    posterior separates environmental randomness from epistemic uncertainty and
+    supports counterfactual intervention queries.
+
+    \item \textbf{Causal, budget-conditioned distributional policy.}
+    We develop Causal Bayesian Quantile Implicit Q-Learning (\algo), which
+    combines doubly robust intervention-effect supervision, conservative offline
+    policy learning, quantile return estimation, and dynamic budget conditions.
+    MAPF feasibility is enforced outside the learned policy.
+
+    \item \textbf{Identification- and mechanism-oriented evaluation.}
+    We propose randomized simulator interventions, paired counterfactual
+    rollouts, mediation analysis, calibration tests, and mechanism-shift
+    generalization, in addition to conventional makespan benchmarks.
+\end{enumerate}
+
+These contributions deliberately differ from a generic ``GNN + PPO'' scheduler.
+The central hypothesis is that causal propagation and value of intervention
+enable better allocation of expensive optimization effort.
+
+\section{Related Work}
+\label{sec:related}
+
+\subsection{FJSP with Transportation and Conflict-Free Routing}
+
+FJSP with transportation resources jointly models production operations and
+vehicle movements. Berterottiere et al.\ extend disjunctive-graph representations
+to transportation resources and introduce dedicated benchmarks
+\citep{berterottiere2024}. Sun et al.\ combine a hybrid genetic algorithm with
+time-window-based conflict-free routing \citep{sun2023}. Precedence-constrained
+task assignment and path finding adds manufacturing task dependencies to MAPF
+\citep{liu2024}, while CBS-TA-PTC integrates task assignment, precedence, and
+temporal constraints \citep{chong2024}.
+
+Recent work moves closer to joint production and path decisions. ACES jointly
+assigns manufacturing processes to machines and generates cyclic robot plans,
+with steady-state throughput as the objective \citep{leet2025}. Li et al.\
+combine job-shop scheduling and priority-based path planning
+\citep{li2026}. Moinuddin et al.\ formulate FJSP with heterogeneous transbots,
+zoning, and handoffs using constraint programming \citep{moinuddin2026}.
+These works establish the relevance of explicit routing, but they do not study
+causal selection of path-planning and rescheduling interventions under a shared
+query budget.
+
+\subsection{Bayesian Models for Dynamic Scheduling}
+
+Dynamic Bayesian networks model temporal dependencies and update uncertainty as
+new evidence arrives \citep{kungurtsev2024}. Zhu et al.\ use operation- and
+system-level Bayesian networks to quantify how disturbances propagate through
+an FJSP schedule \citep{zhu2026}. Zheng et al.\ use posterior disturbance impact
+to guide dynamic rescheduling under incomplete look-ahead information
+\citep{zheng2025}.
+
+Our work differs in three respects. First, uncertainty is generated by
+multi-robot path execution rather than only exogenous processing disturbances.
+Second, graph nodes include explicit interventions and system-level outcomes.
+Third, Bayesian inference is coupled with identifiable treatment-effect
+estimation and a long-horizon budgeted policy.
+
+\subsection{Causal Inference and Prescriptive Manufacturing}
+
+Causal machine learning estimates the outcome of interventions rather than
+predicting observations. Generalized random forests and doubly robust learners
+support heterogeneous effect estimation with flexible nuisance models
+\citep{athey2019,chernozhukov2018}. CAnDOIT combines observational and
+interventional time-series data for causal discovery \citep{castri2024}.
+Recent prescriptive-maintenance work uses intervention distributions and CATE
+to rank production-line actions \citep{saretzky2026}. Dynamic targeting under
+shared capacity further shows that individual treatment effects must be
+adjusted by state-dependent system opportunity costs \citep{hu2025}.
+
+We use the factory simulator as a source of randomized and paired interventions.
+This design permits direct validation against simulator ground-truth effects,
+which is usually unavailable in observational industrial studies.
+
+\subsection{Distributional, Offline, and Constrained RL for Scheduling}
+
+Most learning-based FJSP methods construct schedules using policy gradients or
+graph neural networks. Recent improvement-search methods revise an existing
+schedule and can achieve stronger solution quality \citep{wang2025}. Graph-RHO
+uses critical-path-aware heterogeneous graphs and adaptive uncertainty
+thresholds to accelerate rolling-horizon FJSP \citep{li2026graphrho}. It does not
+model explicit multi-robot path execution, identifiable intervention effects,
+or shared query budgets. Offline RL reduces simulator interaction and can learn
+from solver or heuristic logs. CDQAC uses a conservative discrete quantile
+critic for JSP/FJSP and demonstrates learning from suboptimal data
+\citep{remmerden2025}.
+
+Distributional RL estimates a return distribution using quantile regression
+\citep{dabney2018}; risk-sensitive extensions optimize CVaR or broader spectral
+risk measures \citep{moghimi2025}. C2IQL conditions an offline policy on dynamic
+constraints while avoiding out-of-distribution action queries
+\citep{liu2025c2iql}. O3SRL combines offline RL with online no-regret
+optimization for reward-cost trade-offs \citep{chemingui2025}.
+
+\method\ combines these ideas for a new action semantics: deciding whether and
+how to invoke costly routing and production interventions.
+
+\section{Problem Formulation}
+\label{sec:problem}
+
+\subsection{Factory Model}
+
+Let \(\mathcal{J}\) be a set of jobs, \(\mathcal{M}\) a set of machines, and
+\(\mathcal{A}\) a fleet of AGVs operating on graph \(G=(V,E)\). Job \(J_i\)
+contains an ordered sequence of operations
+\(O_{i1},\ldots,O_{in_i}\). Operation \(O_{ij}\) can be processed by machines in
+\(\mathcal{M}_{ij}\), with duration \(p_{ijk}\) on machine \(M_k\).
+Machines process at most one operation at a time and processing is
+non-preemptive.
+
+If two consecutive operations use different machines, a pickup-delivery task is
+released. A path is a time-indexed sequence of vertices. Feasible joint paths
+exclude vertex conflicts and opposite-direction edge conflicts and respect
+pickup, delivery, and service constraints.
+
+\subsection{Decision Epochs and State}
+
+The simulator advances on an event timeline. A high-level decision epoch occurs
+when at least one of the following events happens:
+
+\begin{itemize}[leftmargin=*]
+    \item an operation or transport task is released;
+    \item a vehicle arrives or becomes idle;
+    \item observed transport delay exceeds a prediction interval;
+    \item a machine is at risk of inbound-material starvation;
+    \item the rolling horizon expires.
+\end{itemize}
+
+The pre-intervention state is
+\begin{equation}
+    S_t =
+    \left(
+    G_t^{\mathrm{job}},
+    G_t^{\mathrm{map}},
+    X_t^{\mathrm{machine}},
+    X_t^{\mathrm{agv}},
+    X_t^{\mathrm{task}},
+    H_t,
+    B_t
+    \right),
+    \label{eq:state}
+\end{equation}
+where \(H_t\) is the logged history and \(B_t=(B_t^q,B_t^r,B_t^c)\) contains
+remaining query, rescheduling, and computation budgets. Only variables observed
+before intervention are included in \(S_t\).
+
+\subsection{Intervention Actions}
+
+The high-level action is
+\begin{equation}
+    U_t \in
+    \left\{
+    u^0,\,
+    u^q,\,
+    u^a,\,
+    u^p,\,
+    u^m,\,
+    u^j
+    \right\},
+\end{equation}
+representing no intervention, high-fidelity MAPF query, AGV reassignment,
+partial sequence repair, machine reassignment, and joint rolling-horizon
+rescheduling, respectively. Each action has a vector cost
+\(c(U_t)=(c_q,c_r,c_{\mathrm{cpu}})\).
+
+The policy does not output low-level robot moves. Given the selected assignment
+and routing request, a deterministic MAPF layer returns paths or an explicit
+timeout/infeasibility status.
+
+\subsection{Budgeted Risk-Sensitive Objective}
+
+The primary outcome is terminal makespan including actual path execution:
+\begin{equation}
+    \cmax = \max_{J_i\in\mathcal{J}} C_i.
+\end{equation}
+
+We optimize
+\begin{equation}
+    \min_\pi
+    \E_\pi[\cmax]
+    +\lambda_{\alpha}\cvar_{\alpha,\pi}(\cmax)
+    +\eta \E_\pi\!\left[\sum_t c_{\mathrm{cpu}}(U_t)\right],
+    \label{eq:objective}
+\end{equation}
+subject to
+\begin{equation}
+    \sum_t c_q(U_t)\le B^q,\qquad
+    \sum_t c_r(U_t)\le B^r,\qquad
+    \sum_t c_{\mathrm{cpu}}(U_t)\le B^c.
+    \label{eq:budgets}
+\end{equation}
+Unlike discounted safety proxies, these are episode-level non-discounted
+constraints.
+
+\section{The \method\ Framework}
+\label{sec:method}
+
+\subsection{Overview}
+
+\method\ contains four modules:
+
+\begin{enumerate}[leftmargin=*]
+    \item a closed-loop event simulator that logs production and path execution;
+    \item a domain-constrained Bayesian structural causal model;
+    \item a randomized intervention and doubly robust effect-estimation layer;
+    \item a budget-conditioned distributional offline RL policy with a MAPF
+    safety layer.
+\end{enumerate}
+
+The simulator first generates observational and interventional trajectories.
+The causal model estimates posterior effect distributions. These effects provide
+auxiliary supervision and uncertainty penalties for the offline policy. At
+deployment, the policy selects only high-level intervention types; conventional
+optimization and planning modules execute them.
+
+\subsection{Cross-Layer Dynamic Bayesian Causal Model}
+
+We organize variables into transportation and production layers. Transportation
+variables include task-wave intensity \(Q_t\), AGV state \(A_t\), bottleneck
+occupancy \(W_t\), candidate-route overlap \(R_t\), transport delay \(D_t\), and
+path failure \(F_t\). Production variables include machine queues \(L_t\),
+material starvation \(S_t^{m}\), operation releases \(O_t\), critical-path state
+\(K_t\), and remaining makespan \(M_t\).
+
+The graph structure combines hard domain constraints and data validation:
+\begin{itemize}[leftmargin=*]
+    \item job precedence and machine capacity define mandatory directions;
+    \item actions cannot have parents from post-intervention variables;
+    \item lagged edges are validated using temporal conditional-independence
+    tests;
+    \item observationally discovered edges that violate process semantics are
+    rejected;
+    \item randomized interventions validate action-to-outcome directions.
+\end{itemize}
+
+A representative factorization is
+\begin{align}
+    p(X_{t+1}\mid X_t,U_t,\Theta)
+    &=
+    p(D_{t+1}\mid Q_t,A_t,W_t,R_t,U_t,\Theta_D)
+    \nonumber\\
+    &\quad
+    p(S_{t+1}^{m}\mid D_{t+1},L_t,U_t,\Theta_S)
+    \nonumber\\
+    &\quad
+    p(K_{t+1}\mid S_{t+1}^{m},O_t,\Theta_K)
+    \nonumber\\
+    &\quad
+    p(M_{t+1}\mid K_{t+1},M_t,\Theta_M).
+    \label{eq:dbn}
+\end{align}
+
+We place priors on \(\Theta\) and maintain a posterior
+\(p(\Theta\mid\mathcal{D})\). For nonlinear conditional mechanisms, a neural
+conditional density model or deep ensemble may parameterize each factor, while
+the graph remains explicit.
+
+\subsection{Randomized and Paired Interventions}
+
+Pure behavior logs are confounded because difficult states trigger more
+expensive actions. During data collection, a behavior policy mixes:
+
+\begin{enumerate}[leftmargin=*]
+    \item randomized interventions with known propensity;
+    \item rule-based policies for operationally plausible states;
+    \item current-policy rollouts to cover policy-induced states.
+\end{enumerate}
+
+At selected simulator checkpoints, we snapshot the complete state and execute
+multiple actions with common random numbers. These paired rollouts approximate
+state-level ground-truth potential outcomes while reducing Monte Carlo variance.
+They are used for evaluation, not assumed to be available in a real factory.
+
+\subsection{Doubly Robust Heterogeneous Effects}
+
+For clarity, consider binary treatment \(U_t\in\{0,1\}\). Let
+\[
+    e(s)=P(U_t=1\mid S_t=s)
+\]
+be the propensity and
+\[
+    \mu_u(s)=\E[Y_t\mid S_t=s,U_t=u]
+\]
+the outcome model. The doubly robust pseudo-outcome is
+\begin{align}
+    \widetilde{\tau}_t
+    &=
+    \mu_1(S_t)-\mu_0(S_t)
+    +\frac{U_t(Y_t-\mu_1(S_t))}{e(S_t)}
+    \nonumber\\
+    &\quad
+    -\frac{(1-U_t)(Y_t-\mu_0(S_t))}{1-e(S_t)}.
+    \label{eq:aipw}
+\end{align}
+
+Cross-fitting prevents nuisance-model overfitting. Multi-action effects are
+estimated relative to \(u^0\), with overlap diagnostics for each action.
+The result is a posterior distribution
+\begin{equation}
+    \tau_u(s)
+    \sim
+    p\!\left(
+    \cmax^{(0)}-\cmax^{(u)}
+    \mid S_t=s,\mathcal{D}
+    \right).
+    \label{eq:effectposterior}
+\end{equation}
+
+We use a lower confidence bound
+\begin{equation}
+    \operatorname{LCB}_u(s)
+    =
+    \E[\tau_u(s)]
+    -\kappa\sqrt{\Var[\tau_u(s)]}
+    \label{eq:lcb}
+\end{equation}
+to avoid interventions whose apparent benefit is supported only in poorly
+covered states.
+
+\subsection{Value of a MAPF Query}
+
+A MAPF query is partly informational: it reveals conflict-aware arrival times
+and feasibility before committing to a production repair. Let \(Z_t\) denote
+the query result. Its expected value of sample information is
+\begin{align}
+    \operatorname{EVSI}(s)
+    &=
+    \E_{Z_t\mid s}
+    \left[
+        \max_{u}
+        \E[\mathcal{U}(u)\mid s,Z_t]
+    \right]
+    \nonumber\\
+    &\quad-
+    \max_{u}
+    \E[\mathcal{U}(u)\mid s]
+    -c_{\mathrm{MAPF}}.
+    \label{eq:evsi}
+\end{align}
+The query is useful only when the information can change a downstream
+assignment or schedule decision. This separates ``uncertain state'' from
+``decision-relevant uncertainty.''
+
+\subsection{\algo}
+
+\algo\ extends implicit Q-learning with three components:
+
+\paragraph{Budget conditioning.}
+The policy and value functions receive the remaining budget \(B_t\). Training
+randomizes initial budgets, allowing one policy to operate across multiple
+compute regimes.
+
+\paragraph{Distributional critic.}
+For quantile levels \(\{\rho_i\}_{i=1}^{N}\), the critic predicts
+\begin{equation}
+    Z_\psi(S_t,U_t,B_t)
+    =
+    \{q_{\rho_1},\ldots,q_{\rho_N}\}.
+\end{equation}
+Quantile regression captures tail makespan and permits CVaR evaluation.
+
+\paragraph{Causal and uncertainty guidance.}
+The effect posterior supplies an auxiliary target and a pessimism penalty:
+\begin{equation}
+    \widehat{Q}_{\mathrm{guided}}(s,u,b)
+    =
+    \widehat{Q}_{\mathrm{offline}}(s,u,b)
+    +\lambda_\tau\operatorname{LCB}_u(s)
+    -\lambda_{\mathrm{ood}}\sigma_u(s).
+    \label{eq:guidedq}
+\end{equation}
+The causal estimate does not replace the long-horizon critic; it regularizes
+action ranking and improves delayed credit assignment.
+
+The total training objective is
+\begin{equation}
+    \mathcal{L}
+    =
+    \mathcal{L}_{\mathrm{quantile}}
+    +\lambda_V\mathcal{L}_{\mathrm{expectile}}
+    +\lambda_{\mathrm{DR}}\mathcal{L}_{\mathrm{effect}}
+    +\lambda_{\mathrm{cal}}\mathcal{L}_{\mathrm{calibration}}.
+    \label{eq:loss}
+\end{equation}
+
+\begin{algorithm}[t]
+\caption{\algo\ Training}
+\label{alg:training}
+\begin{algorithmic}[1]
+\REQUIRE Logged trajectories \(\mathcal{D}\), known behavior propensities,
+budget distribution \(p(B)\)
+\STATE Fit graph-constrained Bayesian mechanisms on training trajectories
+\STATE Cross-fit propensity and outcome nuisance models
+\STATE Construct doubly robust effect targets for each intervention
+\STATE Estimate posterior effect mean, variance, and calibration
+\REPEAT
+    \STATE Sample transitions and budget conditions from \(\mathcal{D}\)
+    \STATE Update quantile critic with distributional Bellman targets
+    \STATE Update expectile value without querying out-of-dataset actions
+    \STATE Add causal LCB supervision and posterior uncertainty penalty
+    \STATE Update budget-conditioned policy by advantage-weighted regression
+\UNTIL{validation criteria converge}
+\RETURN Policy \(\pi_\phi(U\mid S,B)\), causal model, and calibration report
+\end{algorithmic}
+\end{algorithm}
+
+\subsection{Safe Execution and Rolling-Horizon Repair}
+
+The intervention policy is not trusted with physical feasibility. A repair
+action produces candidate machine, sequence, and vehicle decisions. CP-SAT or
+an established FJSP heuristic validates production constraints; PIBT, LaCAM,
+PBS, ECBS, or another configured MAPF solver validates paths. Timeouts and
+infeasibility are explicit outcomes and consume the configured query budget.
+
+Rolling repair is progressively expressive:
+\begin{enumerate}[leftmargin=*]
+    \item AGV reassignment only;
+    \item sequence repair for unstarted operations;
+    \item machine reassignment for unstarted operations;
+    \item joint repair within a finite horizon.
+\end{enumerate}
+This hierarchy permits direct measurement of whether path feedback truly changes
+the production decision.
+
+\section{Identification Assumptions}
+\label{sec:identification}
+
+We state assumptions rather than treating a predictive graph as automatically
+causal.
+
+\paragraph{Consistency.}
+Each intervention has a precise implementation, and the observed result under
+that implementation equals its potential outcome.
+
+\paragraph{Sequential exchangeability.}
+Given logged pre-intervention history \(H_t\), action assignment is independent
+of future potential outcomes. Randomized simulator propensities make this
+assumption testable for the primary training data.
+
+\paragraph{Positivity.}
+Each evaluated intervention has nonzero probability in the states on which its
+effect is reported. We report propensity histograms and effective sample size.
+
+\paragraph{Interference.}
+Tasks interact through shared machines, paths, and budgets. Therefore, the
+treatment unit is the complete system state at an event epoch, not an
+independent job or AGV.
+
+\paragraph{Censoring.}
+Timeout and unfinished episodes are outcomes. They are never silently removed;
+we either model censoring explicitly or assign a preregistered terminal penalty.
+
+\paragraph{Simulator validity.}
+Causal conclusions are valid for the simulated structural mechanisms. Transfer
+to a physical factory requires calibration or real interventional validation.
+
+\section{Experimental Protocol}
+\label{sec:experiments}
+
+\subsection{Research Questions}
+
+\begin{description}[leftmargin=2.0cm,style=nextline]
+    \item[RQ1: Coupling]
+    When do static transportation times fail, and does explicit path execution
+    change machine or sequence decisions?
+
+    \item[RQ2: Causal identification]
+    Can the model recover simulator ground-truth intervention effects under
+    policy-induced confounding?
+
+    \item[RQ3: Calibration]
+    Are posterior transport-delay and effect intervals calibrated on unseen
+    instances and maps?
+
+    \item[RQ4: Budgeted control]
+    Does \algo\ improve the makespan-runtime Pareto frontier relative to never,
+    periodic, threshold, and always-intervene policies?
+
+    \item[RQ5: Tail risk]
+    Does distributional control reduce P90/P95 and CVaR makespan without
+    excessive mean-performance loss?
+
+    \item[RQ6: Mechanism generalization]
+    Does causal structure improve robustness to unseen bottlenecks, fleet sizes,
+    task waves, and route solvers?
+
+    \item[RQ7: Mechanism]
+    How much benefit is mediated through transport delay, machine starvation,
+    and critical-path changes?
+\end{description}
+
+\subsection{Instances and Maps}
+
+FJSP instances are drawn from Brandimarte, Hurink, Kacem, Fattahi, and Dauzere
+families. Factory layouts include:
+
+\begin{itemize}[leftmargin=*]
+    \item open layouts with alternative routes;
+    \item single- and double-bottleneck layouts;
+    \item warehouse-style intersections;
+    \item held-out layouts with changed topology.
+\end{itemize}
+
+We vary jobs, machines, AGVs, task-wave synchronization, cross-zone transport,
+and path service time. Train, validation, and test splits are separated by both
+FJSP instance and map.
+
+\subsection{Routing and Scheduling Backends}
+
+The primary scheduling backends are a dispatching-rule solver and CP-SAT
+rolling-horizon solver. Route execution includes:
+
+\begin{itemize}[leftmargin=*]
+    \item static BFS travel time;
+    \item reactive local A* with deterministic settings;
+    \item PIBT or LaCAM as scalable MAPF;
+    \item PBS or ECBS as a higher-quality MAPF oracle.
+\end{itemize}
+
+All solver calls record status, runtime, conflicts, objective, and timeout.
+
+\subsection{Baselines}
+
+\paragraph{Non-learning policies.}
+Never query, always query, periodic query, delay-threshold trigger,
+uncertainty-threshold trigger, and myopic expected-value-of-information.
+
+\paragraph{RL policies.}
+PPO, QR-DQN or IQN, IQL, constraint-conditioned IQL, and a scheduling-specific
+quantile offline RL baseline.
+
+\paragraph{Optimization policies.}
+Static FJSP followed by MAPF, transport-time-aware FJSP, fixed rolling horizon,
+and small-instance joint CP/MILP where tractable.
+
+\subsection{Ablations}
+
+\begin{itemize}[leftmargin=*]
+    \item remove causal graph and use an unconstrained predictor;
+    \item replace doubly robust effects with outcome regression;
+    \item remove Bayesian posterior and use point estimates;
+    \item remove quantile critic and optimize expected return;
+    \item replace budget conditioning with a fixed Lagrange multiplier;
+    \item remove EVSI and query on uncertainty alone;
+    \item allow AGV repair only, without reopening machine assignment;
+    \item remove paired counterfactual training/evaluation.
+\end{itemize}
+
+\subsection{Metrics}
+
+\paragraph{Production and routing.}
+Mean, P90, P95, and CVaR makespan; completion rate; machine starvation; AGV wait
+and detour; conflict count; path failure; and deadlock.
+
+\paragraph{Computation.}
+MAPF calls, rescheduling calls, total CPU/GPU time, median and tail decision
+latency, and timeout rate.
+
+\paragraph{Causal estimation.}
+PEHE, ATE/CATE bias, coverage of effect intervals, policy value, overlap,
+effective sample size, and calibration error.
+
+\paragraph{Optimality.}
+Small-instance optimality gap and budgeted regret relative to a high-budget
+joint solver.
+
+\subsection{Statistical Protocol}
+
+Each main condition uses at least ten paired seeds. We report mean, standard
+deviation, paired bootstrap confidence intervals, and a preregistered paired
+permutation or Wilcoxon test with effect size. Failed and unfinished episodes
+remain in the denominator. All methods share solver time limits and either a
+fixed wall-clock or oracle-call budget.
+
+\section{Results}
+\label{sec:results}
+
+Except for the explicitly labeled routing prevalidation below, this section
+remains a preregistered shell. Final numerical claims must be regenerated from
+immutable event logs under the complete multi-instance protocol.
+
+\subsection{Does Explicit Path Execution Change the Scheduling Problem?}
+
+\paragraph{Routing-system prevalidation.}
+Before training the full causal policy, we tested whether the execution layer
+can expose a meaningful compute--quality trade-off. We fixed one
+10-job, 50-operation, 6-machine FJSP instance and evaluated 10 maze layouts,
+three system seeds, four AGVs, and a 500-step horizon, for 30 paired episodes
+per method. Unfinished episodes receive a capped makespan of 500. All methods
+use the same greedy production scheduler and seeded random task assigner.
+
+\begin{table}[t]
+\centering
+\caption{Routing prevalidation over 30 paired episodes. These are system-gate
+results, not the final multi-instance evaluation of \algo.}
+\label{tab:routing_prevalidation}
+\begin{tabular}{lrrrrrr}
+\toprule
+Method & Success & Job & Operation & Capped \(\cmax\) & Stationary & Query time \\
+\midrule
+Local A* & 3.3\% & 67.3\% & 81.6\% & 495.8 & 267.9 & 0.00s \\
+Rolling LaCAM & 90.0\% & 96.0\% & 98.5\% & 321.4 & 57.0 & 0.27s \\
+Adaptive LaCAM & 100.0\% & 100.0\% & 100.0\% & 303.5 & 51.1 & 1.96s \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Rolling LaCAM replans when task goals or active/idle status changes and
+otherwise consumes a cached joint trajectory. Adaptive LaCAM adds a 500ms
+LaCAM* refinement only when the initial trajectory exceeds 40 steps; a
+candidate replaces the active plan only if it is shorter. Relative to local A*,
+the adaptive method reduces capped makespan by 38.79\% and tasked stationary
+events by 80.94\%. It triggers 103 refinements, 89 of which shorten the initial
+trajectory; five longer candidates are rejected. This establishes the
+existence of a useful query-budget trade-off, but does not yet establish
+cross-instance or causal-policy superiority.
+
+\begin{figure}[t]
+\centering
+\begin{subfigure}{0.49\linewidth}
+    \includegraphics[width=\linewidth]{routing_completion_rates.pdf}
+    \caption{Execution reliability.}
+\end{subfigure}
+\begin{subfigure}{0.49\linewidth}
+    \includegraphics[width=\linewidth]{routing_query_success_pareto.pdf}
+    \caption{Query-time versus success.}
+\end{subfigure}
+\caption{Prevalidation of the routing execution layer.}
+\label{fig:routing_prevalidation}
+\end{figure}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.62\linewidth]{routing_paired_makespan_heatmap.pdf}
+\caption{Paired capped-makespan reduction of Adaptive LaCAM relative to local
+A* across maze and system seeds.}
+\label{fig:routing_heatmap}
+\end{figure}
+
+\todo{Extend this prevalidation to multiple FJSP families and report the
+fraction of instances in which path feedback changes the preferred machine or
+sequence decision.}
+
+\paragraph{Preliminary intervention predictor.}
+Random counterfactual teacher probes collected 600 refinement outcomes on
+states visited by the rolling policy. A PyTorch multi-task MLP predicts
+refinement benefit, benefit quantiles, and query cost. On 105 outcomes from two
+held-out maps, it obtains 80.0\% benefit classification accuracy, 0.85-step
+median-benefit MAE, and 0.047s query-cost MAE. This is predictive
+prevalidation only: the network has not yet replaced the threshold online, and
+these metrics are not policy-value estimates.
+
+\subsection{Can Intervention Effects Be Identified?}
+
+\todo{Compare naive regression, IPW, doubly robust estimation, causal forest,
+and the Bayesian causal model against paired simulator effects.}
+
+\subsection{Main Budgeted Scheduling Results}
+
+\begin{table}[t]
+\centering
+\caption{Budgeted scheduling performance on held-out instances and maps.}
+\label{tab:main}
+\begin{tabular}{lccccc}
+\toprule
+Method & Mean \(\cmax\) & CVaR \(\cmax\) & Completion & MAPF calls & Runtime \\
+\midrule
+Never query & -- & -- & -- & -- & -- \\
+Periodic & -- & -- & -- & -- & -- \\
+Always query & -- & -- & -- & -- & -- \\
+Threshold & -- & -- & -- & -- & -- \\
+C2IQL baseline & -- & -- & -- & -- & -- \\
+\algo\ (ours) & -- & -- & -- & -- & -- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\todo{Populate Table~\ref{tab:main} from final CSV only.}
+
+\subsection{Causal Mediation and Decision Diagnostics}
+
+\todo{Decompose total effects through transport delay, machine starvation, and
+critical-path changes. Show states where a locally beneficial route intervention
+does not affect terminal makespan.}
+
+\subsection{Mechanism-Shift Generalization}
+
+\todo{Evaluate held-out bottleneck topology, AGV count, task-wave process, and
+route solver. Compare degradation of causal and purely predictive models.}
+
+\section{Implementation Status and Evidence Boundary}
+\label{sec:status}
+
+The current SkyEngine prototype contains job, operation, machine, routing-task,
+and AGV states; pluggable job, route, and assignment solvers; event-level
+transport-to-machine feedback; metrics; and preliminary learning modules. The
+initial lifecycle audit exposed a duplicate coordinate offset and local-A*
+livelock, with only 8 of 10 jobs and 46 of 50 operations completed. After
+repairing the coordinate contract and integrating rolling LaCAM with
+collision-semantic alignment, dock reservation, and dock clearance, the
+reference lifecycle completes all 10 jobs and 50 operations. The adaptive
+prevalidation completes all 30 paired episodes, while the local A*
+implementation remains a reactive and incomplete routing baseline.
+
+Consequently, the following are prerequisites for any submitted empirical
+claim:
+
+\begin{enumerate}[leftmargin=*]
+    \item freeze a versioned multi-instance data contract;
+    \item separate deterministic local A* from its stochastic-escape ablation;
+    \item validate a second higher-quality MAPF oracle in addition to LaCAM;
+    \item mark timeout, fallback, mock, and unfinished episodes explicitly;
+    \item regenerate all results under the protocol in
+    Section~\ref{sec:experiments}.
+\end{enumerate}
+
+This section should be removed from the final submission and replaced by a
+reproducibility statement after these gates pass.
+
+\section{Limitations and Threats to Validity}
+\label{sec:limitations}
+
+\paragraph{Causal validity.}
+Randomized simulator interventions identify effects under the simulator
+mechanisms, not automatically in a physical factory. Hidden operational
+variables may violate exchangeability in real logs.
+
+\paragraph{Graph misspecification.}
+Domain constraints reduce false directions but may omit relevant mechanisms.
+We therefore report graph stability and compare against unconstrained outcome
+models.
+
+\paragraph{Interference and nonstationarity.}
+Shared routes and machines create interference. Policy deployment also changes
+the state distribution and potentially the observed causal mechanism. Periodic
+recalibration or explicit mechanism-change detection may be required.
+
+\paragraph{Solver dependence.}
+The value of querying MAPF depends on solver quality and runtime. Conclusions
+must be tested across at least two route solvers.
+
+\paragraph{Scope.}
+The first study uses discrete time, unit-speed vehicles, and finite jobs.
+Kinematics, battery charging, stochastic arrivals, and physical validation are
+future extensions.
+
+\section{Conclusion}
+\label{sec:conclusion}
+
+We introduced the Budgeted Causal FJSP--MAPF Intervention Problem and proposed
+\method, a framework for deciding when expensive path evaluation and rolling
+rescheduling are causally useful. The approach combines an interpretable
+cross-layer dynamic Bayesian causal model, randomized and doubly robust
+intervention-effect estimation, and a budget-conditioned distributional offline
+RL policy. Its intended value is not merely lower predicted travel time, but
+better allocation of optimization effort to interventions that propagate to
+the production critical path. The proposed evaluation emphasizes causal
+identification, posterior calibration, tail risk, compute-quality Pareto
+efficiency, and mechanism-shift generalization. Empirical conclusions remain
+contingent on the preregistered system and experiment gates.
+
+\begin{thebibliography}{99}
+
+\bibitem[Athey et al.(2019)]{athey2019}
+Athey, S., Tibshirani, J., and Wager, S. (2019).
+Generalized random forests.
+\emph{The Annals of Statistics}, 47(2), 1148--1178.
+
+\bibitem[Berterottiere et al.(2024)]{berterottiere2024}
+Berterottiere, L., Dauzere-Peres, S., and Yugma, C. (2024).
+Flexible job-shop scheduling with transportation resources.
+\emph{European Journal of Operational Research}, 312(3), 890--909.
+
+\bibitem[Castri et al.(2024)]{castri2024}
+Castri, L., Mghames, S., Hanheide, M., and Bellotto, N. (2024).
+CAnDOIT: Causal discovery with observational and interventional data from time series.
+\emph{Advanced Intelligent Systems}, 6(12), 2400181.
+
+\bibitem[Chemingui et al.(2025)]{chemingui2025}
+Chemingui, Y., Deshwal, A., Fern, A., Nguyen-Tang, T., and Doppa, J. (2025).
+Online optimization for offline safe reinforcement learning.
+\emph{Advances in Neural Information Processing Systems}.
+
+\bibitem[Chernozhukov et al.(2018)]{chernozhukov2018}
+Chernozhukov, V., Chetverikov, D., Demirer, M., et al. (2018).
+Double/debiased machine learning for treatment and structural parameters.
+\emph{The Econometrics Journal}, 21(1), C1--C68.
+
+\bibitem[Chong et al.(2024)]{chong2024}
+Chong, Y. Q., Li, J., and Sycara, K. (2024).
+Optimal task assignment and path planning using conflict-based search with
+precedence and temporal constraints.
+\emph{Proceedings of AAMAS}.
+
+\bibitem[Dabney et al.(2018)]{dabney2018}
+Dabney, W., Rowland, M., Bellemare, M. G., and Munos, R. (2018).
+Distributional reinforcement learning with quantile regression.
+\emph{Proceedings of AAAI}.
+
+\bibitem[Hu et al.(2025)]{hu2025}
+Hu, Y., Li, S., and Wager, S. (2025).
+Optimal targeting in dynamic systems.
+\emph{arXiv preprint arXiv:2507.00312}.
+
+\bibitem[Kungurtsev et al.(2024)]{kungurtsev2024}
+Kungurtsev, V., Rysavy, P., Idlahcen, F., Rytir, P., and Wodecki, A. (2024).
+Learning dynamic Bayesian networks from data: Foundations, first principles
+and numerical comparisons.
+\emph{arXiv preprint arXiv:2406.17585}.
+
+\bibitem[Leet et al.(2025)]{leet2025}
+Leet, C., Sciortino, A., and Koenig, S. (2025).
+Jointly assigning processes to machines and generating plans for autonomous
+mobile robots in a smart factory.
+\emph{arXiv preprint arXiv:2502.21101}.
+
+\bibitem[Li et al.(2026)]{li2026}
+Li, R., et al. (2026).
+A new framework for job shop integrated scheduling and vehicle path planning problem.
+\emph{Sensors}, 26(2), 543.
+
+\bibitem[Li et al.(2026)]{li2026graphrho}
+Li, Y., Wang, J., Peng, M., Li, G., and Xu, W. (2026).
+Graph-RHO: Critical-path-aware heterogeneous graph network for long-horizon
+flexible job-shop scheduling.
+\emph{arXiv preprint arXiv:2604.10073}.
+
+\bibitem[Liu et al.(2024)]{liu2024}
+Liu, S., et al. (2024).
+An integrated approach to precedence-constrained multi-agent task assignment
+and path finding for mobile robots in smart manufacturing.
+\emph{Applied Sciences}, 14(7), 3094.
+
+\bibitem[Liu et al.(2025)]{liu2025c2iql}
+Liu, Z., Li, X., and Zhang, J. (2025).
+C2IQL: Constraint-conditioned implicit Q-learning for safe offline
+reinforcement learning.
+\emph{Proceedings of ICML}.
+
+\bibitem[Moghimi and Ku(2025)]{moghimi2025}
+Moghimi, M. and Ku, H. (2025).
+Beyond CVaR: Leveraging static spectral risk measures for enhanced
+decision-making in distributional reinforcement learning.
+\emph{Proceedings of ICML}.
+
+\bibitem[Moinuddin et al.(2026)]{moinuddin2026}
+Moinuddin, A., Er Raqabi, E. M., and Van Hentenryck, P. (2026).
+Scheduling and routing in the flexible job shop with heterogeneous transbots
+and zoning: A constraint programming approach.
+\emph{arXiv preprint arXiv:2604.24483}.
+
+\bibitem[Remmerden et al.(2025)]{remmerden2025}
+van Remmerden, J., Bukhsh, Z., and Zhang, Y. (2025).
+Generalizing beyond suboptimality: Offline reinforcement learning learns
+effective scheduling through random data.
+\emph{arXiv preprint arXiv:2509.10303}.
+
+\bibitem[Saretzky et al.(2026)]{saretzky2026}
+Saretzky, F., Andersen, L., Engel, T., and Ansari, F. (2026).
+Integrating causal foundation model in prescriptive maintenance framework for
+optimizing production line OEE.
+\emph{arXiv preprint arXiv:2512.00969}.
+
+\bibitem[Sun et al.(2023)]{sun2023}
+Sun, J., et al. (2023).
+An approach to integrated scheduling of flexible job-shop considering
+conflict-free routing problems.
+\emph{Sensors}, 23(9), 4526.
+
+\bibitem[Wang et al.(2025)]{wang2025}
+Wang, J., Cao, Z., Zhao, P., et al. (2025).
+Learning memory-enhanced improvement heuristics for flexible job shop scheduling.
+\emph{Advances in Neural Information Processing Systems}.
+
+\bibitem[Zheng et al.(2025)]{zheng2025}
+Zheng, T., Li, D., and Li, J. (2025).
+Bayesian dynamic scheduling of multipurpose batch processes under incomplete
+look-ahead information.
+\emph{arXiv preprint arXiv:2512.01093}.
+
+\bibitem[Zhu et al.(2026)]{zhu2026}
+Zhu, Y., Zhang, B., Meng, R., et al. (2026).
+Spatiotemporal dual dimensional disturbance perception and Bayesian
+quantitative assessment method for flexible job shop scheduling.
+\emph{Digital Twin}. DOI: 10.1080/27525783.2026.2690864.
+
+\end{thebibliography}
+
+\end{document}

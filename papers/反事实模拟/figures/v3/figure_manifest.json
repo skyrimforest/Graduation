@@ -1,0 +1,94 @@
+{
+  "figures": [
+    {
+      "claim_scope": "conceptual system architecture; no empirical claim",
+      "evidence": "method",
+      "outputs": {
+        "pdf": "论文/figures/v3/fig01_system_architecture.pdf",
+        "pdf_sha256": "9a4ec73489c2a2f9a3371aef2e648ee41fba894d2e59386bb9aec344d9c2cc26",
+        "png": "论文/figures/v3/fig01_system_architecture.png",
+        "png_sha256": "e3cb373f5a807eb6444f6951961a77e033b35a4db4ed92776e2df157e0831def"
+      },
+      "sources": [],
+      "stem": "fig01_system_architecture"
+    },
+    {
+      "claim_scope": "conceptual online timing contract; no empirical claim",
+      "evidence": "method",
+      "outputs": {
+        "pdf": "论文/figures/v3/fig02_continuous_clock_timeline.pdf",
+        "pdf_sha256": "44c869ef115162ebc991341beb0aeaa8e5ef787651a4390993fd8f4d4a771c49",
+        "png": "论文/figures/v3/fig02_continuous_clock_timeline.png",
+        "png_sha256": "a567de6fad69371de765b3adbf15c237a290faacaa3abdfbb984e90969ff29bc"
+      },
+      "sources": [],
+      "stem": "fig02_continuous_clock_timeline"
+    },
+    {
+      "claim_scope": "independent v2.1 confirmation, 40 paired states",
+      "evidence": "confirmed",
+      "outputs": {
+        "pdf": "论文/figures/v3/fig03_budget_quality_confirmation.pdf",
+        "pdf_sha256": "b1958ea23b1f9ec40d535b4c273374f1b59eab00b882be23ab3ff40799d9c71c",
+        "png": "论文/figures/v3/fig03_budget_quality_confirmation.png",
+        "png_sha256": "95ba3ee3035e90f97d74e5871f1d525ad78b32c5a55d087894f327f8b450ce38"
+      },
+      "sources": [
+        "/Users/bytedance/project/learn/flex_manufacture/260601天工论文准备/artifacts/skycausal_publication_confirmation_v2_1_09760697/analysis.json"
+      ],
+      "stem": "fig03_budget_quality_confirmation"
+    },
+    {
+      "claim_scope": "independent v2.1 confirmation, 40 paired states",
+      "evidence": "confirmed",
+      "outputs": {
+        "pdf": "论文/figures/v3/fig04_state_profile_confirmation.pdf",
+        "pdf_sha256": "0518d7c26269b18c3059869441994552a40d6de7b8405eda44b062a2fe15546a",
+        "png": "论文/figures/v3/fig04_state_profile_confirmation.png",
+        "png_sha256": "64ad629b157e2474459ad96d0fa60cd2d9f2f62c6b5fcac47db2e830024c8376"
+      },
+      "sources": [
+        "/Users/bytedance/project/learn/flex_manufacture/260601天工论文准备/artifacts/skycausal_publication_confirmation_v2_1_09760697/analysis.json"
+      ],
+      "stem": "fig04_state_profile_confirmation"
+    },
+    {
+      "claim_scope": "five paired states; not authorized for an active-policy quality claim",
+      "evidence": "development-only",
+      "outputs": {
+        "pdf": "论文/figures/v3/fig05_execution_value_development.pdf",
+        "pdf_sha256": "452d2ad169a58f2c804e20b16da53895d066b76fe1986ef2b18cb655648f84ac",
+        "png": "论文/figures/v3/fig05_execution_value_development.png",
+        "png_sha256": "208790f9188fcc2fdef9fa24474323a5b1057e195c2839996776f4656d5f4228"
+      },
+      "sources": [
+        "/Users/bytedance/project/learn/flex_manufacture/260601天工论文准备/artifacts/skycausal_execution_value_analysis_dev_v0/analysis.json"
+      ],
+      "stem": "fig05_execution_value_development"
+    },
+    {
+      "claim_scope": "30 paired states; unified action schema and calibration ablation; not an independent confirmation",
+      "evidence": "development-only",
+      "outputs": {
+        "pdf": "论文/figures/v3/fig06_online_meta_30state_development.pdf",
+        "pdf_sha256": "40946f9e54016afcf699dcd3b3f9d74e8824d1b3a57df24fcf6ee0f853c0c792",
+        "png": "论文/figures/v3/fig06_online_meta_30state_development.png",
+        "png_sha256": "3934d4afc27164d074f4e53263561e3f423c5d1dcf03960603a0e95718d68a0e"
+      },
+      "sources": [
+        "/Users/bytedance/project/learn/flex_manufacture/260601天工论文准备/artifacts/skycausal_online_meta_unified_action_dev_v1/analysis_30state_calibrated.json"
+      ],
+      "stem": "fig06_online_meta_30state_development"
+    }
+  ],
+  "generator": {
+    "path": "论文/scripts/generate_v3_figures.py",
+    "sha256": "afbfe634867fd9bc02f0e1316ba707927dec797049a757add8403e339347d592"
+  },
+  "schema_version": "skycausal.paper-figure-manifest.v1",
+  "source_files": {
+    "artifacts/skycausal_execution_value_analysis_dev_v0/analysis.json": "1e7fd4cbe29cdaf802538daed8447728800159a722a3b4bb9dc2d3d90a78cf15",
+    "artifacts/skycausal_online_meta_unified_action_dev_v1/analysis_30state_calibrated.json": "84683ab83449f5e383977ade643562a46653aaea55ba17cefd7c309d6b2e99db",
+    "artifacts/skycausal_publication_confirmation_v2_1_09760697/analysis.json": "7ea68c99f420599a2ddcd68ef3487e651f19caa5903885c6db46e861c2070a1a"
+  }
+}

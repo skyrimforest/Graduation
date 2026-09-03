@@ -37,9 +37,17 @@ ICAPS 2027 投稿材料与实验证据仓库（**私有**——双盲评审期�
 ```
 paper-icaps2027/     ICAPS 主论文 (LaTeX + PDF + 图表 + 讲稿 PPT)
 paper-2..7-*         六个后续方向的中文初稿（基准评测/学习分解/lifelong/死锁/鲁棒/LLM诊断）
-results/             战役原始数据: E1-E4 主因子(948) + E8 双臂(52) + 五臂消融(130)
+results/             战役原始数据: E1-E4 主因子(948) + E8 双臂(52) + 五臂消融(130) + E5
 analysis/            配对分析脚本 (imputation + Wilcoxon)
 20260901_FJSP_MAPF七方向科研地图.md   七方向研究地图
+papers/              论文工作区: 1~7号方向 + 反事实模拟/LLMEnvolve/LLMSchedule/毕业论文_天工 (LaTeX 源+PDF)
+research-notes/      研究笔记: 历史结果54篇 + 各方向README + 阶段设计/验收报告/评审包
+literature/          文献库: common(通用) + 各方向专题 PDF + bib
+reports/             汇报PPT + 调研报告 + 创新点构思v0.1-0.3 + PPT生成脚本
+templates/           南大模板(NJUThesis) + 毕业论文模板
+latex/ scripts/      论文编译工具链 (Dockerfile + latex-build.sh + compose.latex.yaml)
+RESTORE.md           新服务器完整复现指南
+bootstrap.sh         一键重建工作区脚本
 ```
 
 ## 复现说明
