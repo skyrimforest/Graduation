@@ -12,6 +12,10 @@
 
 \begin{document}
 \maketitle
+\begin{center}\it\small
+Can LLMs Explain Scheduling Failures?\\
+Engine-Grounded Diagnosis with Executable Counterfactual Verification
+\end{center}
 
 \begin{abstract}
 FJSP+MAPF 耦合系统产生丰富的运行工件（指标轨迹、事件流、计划修订账本、异常日志），但缺少把它们变成\emph{可理解因果叙述}的层。本文定义调度系统\textbf{事后诊断}任务
@@ -34,7 +38,9 @@ CRN 无故障孪生对照 + 涌现失效配方 + Generator--Executor--Verifier �
 
 姊妹篇们把耦合系统当作被优化对象；本篇把它当作\emph{被解释对象}。
 动机：车间运维面对的不是一个最优解，而是``为什么这批单晚了/为什么 AGV 都在等''——
-这需要把指标轨迹、事件流与计划演变合成因果叙述。
+这需要把指标轨迹、事件流与计划演变合成因果叙述。全文回答一个研究问题
+（RQ1）：\textbf{LLM 是在诊断调度失效，还是只是在读显式的故障痕迹？}
+easy/hard 孪生（§\ref{sec:data}）与无事件涌现失效即为回答此问题而设计。
 
 三个社区现状：（i）LLM-CO 用 LLM 生成启发式或搜算法
 （FunSearch、EoH~\cite{eoh2024}、ReEvo~\cite{reevo2024}、HeurAgenix~\cite{heuragenix2025}、
@@ -76,6 +82,10 @@ padding/fleet/periodic\_revision/assigner）。
 \text{干预成功率} $=\Pr[\Delta\mathrm{KPI}(\iota)\ge\delta]$（同种子反事实重仿真）。
 忠实度在 statement 级执行：除可回查外，辅以对抗注入（植入伪证据检验是否转引）
 与证据消融（删除被引证据检验结论是否漂移），防止 post-rationalization~\cite{cnotf2024}。
+干预成功率即\textbf{诊断效用}（Diagnostic Utility）
+$\mathcal{U}=\mathbb{E}[\Delta\mathrm{KPI}(\pi(e))]$ 的经验估计——
+如同医学上的 diagnosis$\to$treatment$\to$outcome：我们不问``LLM 说得像不像专家''，
+而问``若按其解释施治，系统能否被修复''。
 
 \section{架构}\label{sec:arch}
 
@@ -106,11 +116,19 @@ padding/fleet/periodic\_revision/assigner）。
 $\times$ 随机化故障目标/时刻/时长），跑批器以进程隔离+硬超时执行，
 核验器按签名谓词判定——不达标即丢弃，宁可缺数不给错标签。
 
-\textbf{场景家族}：(i) 注入故障 36（机器 16/双故障 12/随机扰动 8，标签由构造为真）；
-(ii) 基线 6；(iii) 涌现配方 8（greedy+极小车队的饥饿活锁、cpsat+K=6 的走廊拥塞——
-纯 FJSP/纯 MAPF 中不存在的耦合失效，无事件、只能从统计签名推断）；
+\textbf{场景家族}——按标签的认识论地位二分：
+\emph{注入式因果失效}（injected causal failures）：
+$do(F{=}1)$ vs $do(F{=}0)$，标签由构造为真，CRN 孪生下是干净的干预效应；
+\emph{涌现式系统失效}（emergent systemic failures）：
+饥饿活锁、走廊拥塞等纯 FJSP/纯 MAPF 中不存在的耦合病理——
+没有任何显式故障事件，所有组件各自``正常''而组合死亡，标签由
+签名谓词定义（现象学诊断而非 do() 意义上的根因），只有核验器确认签名后才入库。
+具体配方：(i) 注入故障 36（机器 16/双故障 12/随机扰动 8）；
+(ii) 基线 6；(iii) 涌现配方 8；
 (iv) \textbf{CRN 无故障孪生} 28：每个注入场景配同配置无故障孪生，
 孪生与故障案的 makespan 差即干预应恢复量；孪生未完工则配对作废。
+cases\_v2 是该过程式生成器的一个抽样实例——基准以生成器的覆盖域与
+held-out 泛化定义，规模可持续扩张。
 
 \begin{table}[h]\centering\small
 \begin{tabular}{lrl}
