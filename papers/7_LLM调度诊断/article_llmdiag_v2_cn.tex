@@ -8,7 +8,7 @@
 
 \title{引擎接地的调度诊断解释层：LLM 在 FJSP+MAPF 耦合系统中的\\定位、归因、可回查证据与可仿真干预}
 \author{SkyResearch}
-\date{2026年9月4日 \quad v2 草稿（v2 数据集 + 规则塌陷基线；LLM 全量评测进行中）}
+\date{2026年9月4日 \quad v2.1 草稿（v2 数据集 + 规则塌陷 + 4B 全量五发现；agentic 与 frontier 待补）}
 
 \begin{document}
 \maketitle
@@ -153,10 +153,37 @@ hard（无事件流） & 0.413 & 0.481 & 0.346 & 1.00\\
 \end{table}
 
 塌陷幅度的含义：规则只能回答预埋的签名，无事件耦合失效上目标不可知
-（部分分 0.5 封顶）；LLM 是否能从统计签名推断出规则推不出的结论，
-由 hard 档 LLM--规则差值给出——反事实推理文献预言 LLM 在 abduction 型
-任务上系统性弱~\cite{counterbench2025,execcf2025}，本基准给出首个调度域实证。
-[LLM\_FULL\_TABLE]
+（部分分 0.5 封顶）。反事实推理文献预言 LLM 在 abduction 型任务上系统性弱
+~\cite{counterbench2025,execcf2025}；本基准给出首个调度域实证——结果如下。
+
+\begin{table}[h]\centering\small
+\begin{tabular}{llcccc}
+\toprule
+诊断器 & 变体 & 定位 & 归因(严格) & JRA & 忠实度\\
+\midrule
+规则 & easy & 0.596 & 0.596 & 0.596 & --\\
+规则 & hard & 0.413 & 0.481 & 0.346 & --\\
+\midrule
+Qwen3-4B (frozen) & easy & 0.250 & 0.481 & 0.212 & 0.969\\
+Qwen3-4B (frozen) & hard & 0.087 & 0.308 & 0.038 & 0.990\\
+\bottomrule
+\end{tabular}
+\caption{cases\_v2 主对照表（104 案例，温度 0，干净档案视图）。}\label{tab:main}
+\end{table}
+
+全量结果给出五个发现：（F1）4B 规模 LLM 全面低于规则基线
+（JRA 0.212/0.038 vs 0.596/0.346）；（F2）hard 档崩塌至接近零
+（JRA 0.038）——无事件 abductive 推断的缺口在调度域被受控证实；
+（F3）\textbf{忠实—正确分离}：忠实度高达 0.97--0.99 与正确率无关，
+每条引用都真实可回查但结论系统性错误——这正是忠实度必须独立成指标、
+且``引用成立$\neq$诊断成立''的直接证据；（F4）\textbf{基率忽视}：
+34 个无故障基线中 30 个被过度诊断（饥饿/拥塞/瓶颈），模型没有
+``正常运行包络''概念，把正常等待统计读成病理；（F5）\textbf{词表锚定失败}：
+30 个走廊拥塞案例中 loc\_type=``corridor'' 从未出现（模型只会输出
+task\_pool/agv/machine），但 cause 判断对 16/30——知道病类、说不出病位。
+干预药房约束 100\% 合规（104 案例全部落在引擎可执行词表内）。
+以上均为 4B 规模结论；frontier 模型与 agentic 取证是否缩小 F1/F2 缺口
+是本基准的开放问题。[LLM\_SCALE\_TABLE]
 
 \section{结论}
 
