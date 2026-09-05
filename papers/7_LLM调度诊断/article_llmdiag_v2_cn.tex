@@ -1,0 +1,236 @@
+\documentclass[UTF8,12pt,a4paper]{ctexart}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{booktabs}
+\usepackage{geometry}
+\usepackage{hyperref}
+\geometry{margin=2.5cm}
+\newtheorem{definition}{定义}
+
+\title{引擎接地的调度诊断解释层：LLM 在 FJSP+MAPF 耦合系统中的\\定位、归因、可回查证据与可仿真干预}
+\author{SkyResearch}
+\date{2026年9月4日 \quad v2.1 草稿（v2 数据集 + 规则塌陷 + 4B 全量五发现；agentic 与 frontier 待补）}
+
+\begin{document}
+\maketitle
+\begin{center}\it\small
+Can LLMs Explain Scheduling Failures?\\
+Engine-Grounded Diagnosis with Executable Counterfactual Verification
+\end{center}
+
+\begin{abstract}
+FJSP+MAPF 耦合系统产生丰富的运行工件（指标轨迹、事件流、计划修订账本、异常日志），但缺少把它们变成\emph{可理解因果叙述}的层。本文定义调度系统\textbf{事后诊断}任务
+$\mathcal{D}:(\tau,q)\mapsto e$——给定运行档案 $\tau$ 与查询 $q$，产出解释
+$e=(\text{定位},\text{归因},\text{证据},\text{干预})$，并给出使 LLM 输出可信的三重机制：
+（1）\textbf{注入式真值}——数据由引擎受控注入制造而非采集，标准答案零人工标注；
+（2）\textbf{可回查证据}——档案中每条事实带证据 ID，评分器逐条程序化核对；
+（3）\textbf{可仿真干预}——干预建议在引擎中以同种子反事实重仿真取得 $\Delta$KPI，
+LLM 不被允许``讲故事''。我们构建首个耦合调度诊断基准 cases\_v2：随机化注入网格 +
+CRN 无故障孪生对照 + 涌现失效配方 + Generator--Executor--Verifier 核验闭环，
+52 个核验场景产出 104 个 easy/hard 孪生案例；核验器在首次实战中即拦截 26 个
+缺陷场景（含 13 个孪生暴露的混因配对）。规则基线在 easy/hard 孪生上的
+定位准确率 $59.6\%\to41.3\%$、JRA $59.6\%\to34.6\%$ 的塌陷证实了基准的区分力：
+无事件耦合失效（活锁/拥塞）构成对 LLM 泛化推断能力的受控测试。
+与 LLM-CO（HeurAgenix、CO-Bench 的生成侧）与在线决策（ReflecSched）不同，
+本层是\emph{事后诊断}且\emph{可被引擎证伪}。
+\end{abstract}
+
+\section{引言}
+
+姊妹篇们把耦合系统当作被优化对象；本篇把它当作\emph{被解释对象}。
+动机：车间运维面对的不是一个最优解，而是``为什么这批单晚了/为什么 AGV 都在等''——
+这需要把指标轨迹、事件流与计划演变合成因果叙述。全文回答一个研究问题
+（RQ1）：\textbf{LLM 是在诊断调度失效，还是只是在读显式的故障痕迹？}
+easy/hard 孪生（§\ref{sec:data}）与无事件涌现失效即为回答此问题而设计。
+
+三个社区现状：（i）LLM-CO 用 LLM 生成启发式或搜算法
+（FunSearch、EoH~\cite{eoh2024}、ReEvo~\cite{reevo2024}、HeurAgenix~\cite{heuragenix2025}、
+CO-Bench~\cite{cobench2026}），属于生成侧，无诊断视角；
+（ii）LLM 在线决策读轨迹提经验但服务于下一轮动作
+（ReflecSched~\cite{reflecsched2025}），评测其失败的是 DynaSchedBench~\cite{dynaschedbench2026}
+——但它诊断的对象是 LLM 调度器本身，而非调度系统；
+（iii）AIOps 根因分析（RCACopilot~\cite{rcacopilot2023}、mABC~\cite{mabc2024}、
+ITBench~\cite{itbench2025}、Cloud-OpsBench~\cite{cloudopsbench2026}、OpenRCA~\cite{openrca2_2026}）
+与我们的评测哲学最近——受控故障注入供 ground truth、agentic 工具取证——
+但其验证止步于人工标注与测试，无重仿真量化，也无跨层耦合失效。
+``LLM 输出的重仿真验证''最近的先例是数字孪生的实施前验证~\cite{llmdt2025}
+与启发式优化的 matched-seeds 重仿真~\cite{llmheur2026}，二者对象均非诊断结论。
+
+\section{诊断任务形式化}\label{sec:form}
+
+\begin{definition}[轨迹]
+$\tau = (\mathbf{m},\ \mathbf{e},\ \mathbf{r},\ \Sigma)$：摘要 KPI 表
+（20 项聚合指标）、事件样本 $\mathbf{e}$、计划修订账本 $\mathbf{r}$、配置 $\Sigma$。
+\end{definition}
+
+\begin{definition}[诊断]
+$\mathcal{D}: (\tau, q) \mapsto e$，解释
+$e=(\ell_t,\ell_r,h,V,\iota)$：定位类型 $\ell_t$ 与目标 $\ell_r$
+（双字段：$\ell_t\in\{\text{machine},\text{agv},\text{machine\_agv},\text{stochastic},
+\text{task\_pool},\text{corridor},\text{machines},\text{none}\}$，
+$\ell_r$ 如 \texttt{machine:3}）、归因 $h$（8 类受控词表 + unseen 逃生舱）、
+证据 $V$（档案内带 ID 事实的引用集合）、干预 $\iota$（引擎可执行配置词表：
+padding/fleet/periodic\_revision/assigner）。
+\end{definition}
+
+\textbf{评测}（ground truth 来自受控注入）：
+\begin{align}
+\text{定位} &= \Pr[\ell_t{=}\ell_t^* \wedge \ell_r{=}\ell_r^*] \ (\text{仅类型对计}\ 0.5), \quad
+\text{归因} = \Pr[h = h^*]\ (\text{disruption 族宽容计}\ 0.5),\\
+\text{JRA} &= \Pr[\text{定位满分} \wedge h{=}h^*], \qquad
+\text{忠实度} = \tfrac{1}{|V|}\sum_{v\in V}\mathbb{1}[\text{v 可回查}],
+\end{align}
+\text{干预成功率} $=\Pr[\Delta\mathrm{KPI}(\iota)\ge\delta]$（同种子反事实重仿真）。
+忠实度在 statement 级执行：除可回查外，辅以对抗注入（植入伪证据检验是否转引）
+与证据消融（删除被引证据检验结论是否漂移），防止 post-rationalization~\cite{cnotf2024}。
+干预成功率即\textbf{诊断效用}（Diagnostic Utility）
+$\mathcal{U}=\mathbb{E}[\Delta\mathrm{KPI}(\pi(e))]$ 的经验估计——
+如同医学上的 diagnosis$\to$treatment$\to$outcome：我们不问``LLM 说得像不像专家''，
+而问``若按其解释施治，系统能否被修复''。
+
+\section{架构}\label{sec:arch}
+
+\begin{enumerate}
+  \item \textbf{证据打包器}：episode 记录 $\to$ 带证据 ID 的紧凑档案
+    （KPI:*/EVT001.../REV:*/CFG:*，$\le$8k token；剥离热力图）。
+    每条事实可引用、可回查，是忠实度可程序化核验的前提。
+  \item \textbf{诊断策略}：同一数据底座、两种观测视图——
+    （a）\emph{单轮打包}：档案整体入上下文，一次产出四元组（消融臂）；
+    （b）\emph{agentic 工具层}（设计中）：引擎暴露为查询工具
+    （查 KPI/查事件/查修订/提交干预$\to$触发反事实），主动取证（主系统）。
+    2026 年的运维基准已明确批评单轮打包为 passive classification~\cite{cloudopsbench2026}，
+    双层设计使我们无论何者胜出均有结论可写。
+    输出经 JsonRegen 循环收口；答案期采样聚合。
+  \item \textbf{反事实执行器}：解析 $\iota$ $\to$ 修改配置 $\to$ 同种子重仿真 $\to$ $\Delta$KPI。
+    采用公共随机数（CRN）配对差报告，$\ge$30 种子做 Wilcoxon 显著性~\cite{crn2024}；
+    失败干预记 $\Delta$KPI$=-\infty$ 不丢弃。
+    该判分器\emph{不依赖标签}——词表外的新失效模式亦可评（忠实度+$\Delta$KPI+unseen 逃生舱）。
+  \item \textbf{训练阶梯}（评测框架的反哺）：frozen 提示 A/B $\to$ ReEvo 式反思精化
+    （喂 best-so-far $\Delta$KPI 对比证据）$\to$ 反事实 DPO
+    （同案例``有效/无效干预''构成偏好对，可验证奖励，无需人工标注）。
+\end{enumerate}
+
+\section{cases\_v2：注入式诊断基准}\label{sec:data}
+
+\textbf{Generator--Executor--Verifier 闭环}：场景生成器从网格抽样
+（实例 mk01--03 $\times$ 策略 $\times$ 车队 $K\in\{2,3,4,6\}$ $\times$ 随机种子
+$\times$ 随机化故障目标/时刻/时长），跑批器以进程隔离+硬超时执行，
+核验器按签名谓词判定——不达标即丢弃，宁可缺数不给错标签。
+
+\textbf{场景家族}——按标签的认识论地位二分：
+\emph{注入式因果失效}（injected causal failures）：
+$do(F{=}1)$ vs $do(F{=}0)$，标签由构造为真，CRN 孪生下是干净的干预效应；
+\emph{涌现式系统失效}（emergent systemic failures）：
+饥饿活锁、走廊拥塞等纯 FJSP/纯 MAPF 中不存在的耦合病理——
+没有任何显式故障事件，所有组件各自``正常''而组合死亡，标签由
+签名谓词定义（现象学诊断而非 do() 意义上的根因），只有核验器确认签名后才入库。
+具体配方：(i) 注入故障 36（机器 16/双故障 12/随机扰动 8）；
+(ii) 基线 6；(iii) 涌现配方 8；
+(iv) \textbf{CRN 无故障孪生} 28：每个注入场景配同配置无故障孪生，
+孪生与故障案的 makespan 差即干预应恢复量；孪生未完工则配对作废。
+cases\_v2 是该过程式生成器的一个抽样实例——基准以生成器的覆盖域与
+held-out 泛化定义，规模可持续扩张。
+
+\begin{table}[h]\centering\small
+\begin{tabular}{lrl}
+\toprule
+归因类别 & 案例数(easy+hard) & 来源\\
+\midrule
+baseline & 34 & 基线+孪生\\
+blocking\_livelock & 30 & 基线改标（greedy 迷宫活锁, 签名确认）\\
+disruption\_machine & 14 & 随机注入\\
+disruption\_machine\_agv & 10 & 随机双故障\\
+starvation\_livelock & 8 & 涌现配方（签名确认）\\
+disruption\_stochastic & 8 & preset（完工者保留）\\
+\bottomrule
+\end{tabular}
+\caption{cases\_v2 构成：52 个核验场景 $\times$ easy/hard 孪生 = 104 案例。
+easy 含事件流（考阅读），hard 删除事件流只留统计特征（考推断）。}\label{tab:data}
+\end{table}
+
+核验器首次实战拦截 26 场景：13 个注入对因孪生未完工作废
+（greedy 臂在迷宫图系统性活锁——若无 CRN 孪生，这批案例将带混因标签入库）、
+5 个涌现配方签名未复现、1 对触发引擎接口屏障死循环（300s 硬超时拦截）。
+
+\section{实验：规则基线的 easy/hard 塌陷}\label{sec:exp}
+
+规则基线（事件优先+阈值签名，v1 逻辑适配双字段）在 104 案例上：
+
+\begin{table}[h]\centering\small
+\begin{tabular}{lcccc}
+\toprule
+变体 & 定位 & 归因(严格) & JRA & 解析率\\
+\midrule
+easy（含事件流） & 0.596 & 0.596 & 0.596 & 1.00\\
+hard（无事件流） & 0.413 & 0.481 & 0.346 & 1.00\\
+\bottomrule
+\end{tabular}
+\caption{规则基线的 easy/hard 塌陷。对比 v1 试点``95\%/97.5\%''的虚胖
+（答案位于事件字段首行、故障目标恒为 0 号机），随机化与无事件耦合失效
+构成实质难度。LLM（Qwen3-4B 本地端点）冒烟 6 案例 loc/JRA 全对，
+全量 104 案例与接地约束 A/B 进行中。}\label{tab:rule}
+\end{table}
+
+塌陷幅度的含义：规则只能回答预埋的签名，无事件耦合失效上目标不可知
+（部分分 0.5 封顶）。反事实推理文献预言 LLM 在 abduction 型任务上系统性弱
+~\cite{counterbench2025,execcf2025}；本基准给出首个调度域实证——结果如下。
+
+\begin{table}[h]\centering\small
+\begin{tabular}{llcccc}
+\toprule
+诊断器 & 变体 & 定位 & 归因(严格) & JRA & 忠实度\\
+\midrule
+规则 & easy & 0.596 & 0.596 & 0.596 & --\\
+规则 & hard & 0.413 & 0.481 & 0.346 & --\\
+\midrule
+Qwen3-4B (frozen) & easy & 0.250 & 0.481 & 0.212 & 0.969\\
+Qwen3-4B (frozen) & hard & 0.087 & 0.308 & 0.038 & 0.990\\
+Qwen3-8B (frozen) & easy & 0.115 & 0.269 & 0.038 & 1.000\\
+Qwen3-8B (frozen) & hard & 0.000 & 0.269 & 0.019 & 0.990\\
+\bottomrule
+\end{tabular}
+\caption{cases\_v2 主对照表（104 案例，温度 0，干净档案视图）。}\label{tab:main}
+\end{table}
+
+全量结果给出五个发现：（F1）Qwen3 家族全面低于规则基线，且\textbf{规模递增单调变差}
+（JRA：4B 0.212/0.038 $\to$ 8B 0.038/0.019）——诊断质量不随模型规模改善；
+（F2）hard 档崩塌至接近零——无事件 abductive 推断的缺口在调度域被受控证实；
+（F3）\textbf{忠实—正确分离}：两档规模的忠实度均高达 0.97--1.00 且与正确率无关
+（8B hard 定位全零仍句句可回查）——``引用成立$\neq$诊断成立''的实测证据，
+忠实度必须独立成指标；（F4）\textbf{基率忽视}：4B 把 30/34 个无故障基线
+诊断为饥饿/拥塞/瓶颈，8B 更甚（29/33 判为 blocking）——两档模型都没有
+``正常运行包络''概念；（F5）\textbf{词表锚定失败}：60 个走廊拥塞案例中
+loc\_type=``corridor'' 从未出现，但 cause 判断部分正确（4B 16/30、
+8B 14/30）——知道病类、说不出病位。
+干预药房约束两档模型均 100\% 合规（104 案例全部落在引擎可执行词表内）。
+frontier 模型与 agentic 取证能否扭转 F1/F2 是本基准的开放问题。[LLM\_SCALE\_TABLE]
+
+\section{结论}
+
+本文定义了引擎接地的调度诊断任务（双字段定位/归因/证据/干预 + 三层判分 +
+反事实验证），交付 Generator--Executor--Verifier 式基准 cases\_v2
+（104 案例，核验闭环拦截 26 缺陷场景）与首个 easy/hard 塌陷基线。
+LLM 全量评测、agentic 工具层与反事实执行器为下一步；
+训练阶梯（反思精化、反事实 DPO）以本框架的可验证奖励为基础。
+代码与数据见 \texttt{sky\_research} 分支 \texttt{0901llmdiag}。
+
+\begin{thebibliography}{99}\small
+\bibitem{eoh2024} Fei et al. Evolution of Heuristics: Towards Efficient Automatic Algorithm Design Using Large Language Model. arXiv:2401.02051, 2024.
+\bibitem{reevo2024} Ye et al. ReEvo: Large Language Models as Hyper-Heuristics with Reflection. NeurIPS, arXiv:2402.01145, 2024.
+\bibitem{heuragenix2025} HeurAgenix: Evolving Heuristics via LLMs. arXiv:2506.15196, 2025.
+\bibitem{cobench2026} CO-Bench: Benchmarking LLM Agents on Combinatorial Optimization. AAAI, arXiv:2504.04310, 2026.
+\bibitem{reflecsched2025} ReflecSched: LLM Agents for Dynamic Flexible Job Shop Scheduling. arXiv:2508.01724, 2025.
+\bibitem{dynaschedbench2026} DynaSchedBench: Dynamic Scheduling LLM Agent Benchmark. ICML, arXiv:2605.27566, 2026.
+\bibitem{rcacopilot2023} Chen et al. Automatic Root Cause Analysis via LLMs for Cloud Incidents. EuroSys, arXiv:2305.15778, 2023.
+\bibitem{mabc2024} mABC: Multi-Agent Blockchain-Inspired Collaboration for Root Cause Analysis. EMNLP Findings, arXiv:2404.12135, 2024.
+\bibitem{itbench2025} ITBench: Benchmarking Agentic AI for IT Operations. ICML, arXiv:2502.05352, 2025.
+\bibitem{cloudopsbench2026} Cloud-OpsBench: Agentic Cloud Operations RCA Benchmark. arXiv:2603.00468, 2026.
+\bibitem{openrca2_2026} OpenRCA 2.0: From Outcome Labels to Causal Process Supervision. arXiv:2606.27154, 2026.
+\bibitem{llmdt2025} LLM Agents with Digital Twins for Process Fault Handling. IEEE ETFA, arXiv:2505.02076, 2025.
+\bibitem{llmheur2026} LLM-Guided Heuristic Design from Simulation Traces. arXiv:2608.09343, 2026.
+\bibitem{cnotf2024} Wallat et al. Correctness is not Faithfulness in RAG Attributions. SIGIR, arXiv:2412.18004, 2024.
+\bibitem{crn2024} Klein et al. Noise-free comparison of stochastic agent-based simulations using common random numbers. arXiv:2409.02086, 2024.
+\bibitem{counterbench2025} CounterBench: Benchmarking Causal Counterfactual Reasoning in LLMs. arXiv:2502.11008, 2025.
+\bibitem{execcf2025} Executable Counterfactuals: abduction steps in counterfactual benchmarks. arXiv:2510.01539, 2025.
+\end{thebibliography}
+
+\end{document}
