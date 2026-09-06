@@ -8,7 +8,7 @@
 
 \title{引擎接地的调度诊断解释层：LLM 在 FJSP+MAPF 耦合系统中的\\定位、归因、可回查证据与可仿真干预}
 \author{SkyResearch}
-\date{2026年9月6日 \quad v2.2 草稿（三档模型主表 + hard 视图质检 + CF--INT 差距 + 反事实执行 + unseen 留出首档；agentic 与 frontier 待补）}
+\date{2026年9月6日 \quad v2.3 草稿（四档模型主表含推理行 + hard 视图质检 + CF--INT 差距 + 反事实执行 + unseen 留出两档；agentic 与 frontier 待补）}
 
 \begin{document}
 \maketitle
@@ -196,33 +196,39 @@ Qwen3-8B (frozen) & easy & 0.115 & 0.269 & 0.038 & 1.000\\
 Qwen3-8B (frozen) & hard & 0.000 & 0.269 & 0.019 & 0.990\\
 Qwen3-32B (frozen) & easy & 0.154 & 0.154 & 0.154 & 1.000\\
 Qwen3-32B (frozen) & hard & 0.067 & 0.000 & 0.000 & 1.000\\
+Qwen3-30B-A3B (thinking) & easy & 0.308 & 0.404 & 0.308 & 0.979\\
+Qwen3-30B-A3B (thinking) & hard & 0.173 & 0.327 & 0.115 & 0.949\\
 \bottomrule
 \end{tabular}
 \caption{cases\_v2 主对照表（104 案例，温度 0，干净档案视图）。4B/8B 经
-Ollama 本地端点，32B 经 vLLM（4$\times$RTX 3090, TP=4, enforce-eager）；
-均关闭思考链。}\label{tab:main}
+Ollama 本地端点（思考链无法关闭, 推理耗 3--5k token）；32B 经 vLLM 关闭
+思考链；30B-A3B-Thinking 为推理模型（思考链开启, reasoning parser 分离）。
+}\label{tab:main}
 \end{table}
 
-全量结果给出五个发现：（F1）Qwen3 家族全面低于规则基线；hard 档 JRA 随规模
+全量结果给出五个发现：（F1）非思考档内 hard 档 JRA 随规模
 \textbf{单调降至零}（4B 0.038 $\to$ 8B 0.019 $\to$ 32B 0.000），easy 档非单调
-（0.212 $\to$ 0.038 $\to$ 0.154）且三档全部远低于规则的 0.596——诊断质量不随
-模型规模改善；（F2）hard 档崩塌至接近零——无事件 abductive 推断的缺口在调度域
+（0.212 $\to$ 0.038 $\to$ 0.154）且三档全部远低于规则的 0.596；开启思考链的
+30B MoE 是唯一在 hard 档取得两位数的 LLM（JRA 0.115, 为非思考档最高 0.038
+的三倍）——\textbf{思考链部分挽回溯因损失, 但仍低于规则基线的 0.346}；（F2）hard 档崩塌至接近零——无事件 abductive 推断的缺口在调度域
 被受控证实（hard 视图三防线质检 52/52 通过, 塌陷非视图缺陷所致, 见
 \texttt{qc\_hard\_report.json}）；
-（F3）\textbf{忠实—正确分离}：三档规模的忠实度均高达 0.97--1.00 且与正确率无关
+（F3）\textbf{忠实—正确分离}：四档规模的忠实度均高达 0.95--1.00 且与正确率无关
 （8B hard 定位全零、32B JRA 0.077 仍句句可回查）——``引用成立$\neq$诊断成立''的
 实测证据，忠实度必须独立成指标；（F4）\textbf{基率忽视}：4B 把 30/34 个无故障
-基线诊断为饥饿/拥塞/瓶颈，8B 更甚（29/33 判为 blocking），32B 达到 34/34 全部误诊
-——三档模型都没有``正常运行包络''概念，且随规模加剧；（F5）\textbf{词表锚定失败}
+基线诊断为饥饿/拥塞/瓶颈，8B 更甚（29/33 判为 blocking），32B 达到 34/34 全部
+误诊，30B-A3B-Thinking 同样 34/34（28 判 blocking、6 判 starvation）——四档
+模型都没有``正常运行包络''概念，且不随规模与推理能力消失；（F5）\textbf{词表锚定失败}
 ：60 个走廊拥塞案例中 loc\_type=``corridor'' 从未出现，但 cause 判断部分正确
 （4B 16/30、8B 14/30）——知道病类、说不出病位；32B 进一步出现\textbf{词表坍缩}
 ：88/104 收敛到单一标签 machine\_bottleneck，并产出词表外标签 disruption\_agv
 （2 例）。
-干预药房约束三档模型均 100\% 合规（104 案例全部落在引擎可执行词表内）。
+干预药房约束四档模型均 100\% 合规（104 案例全部落在引擎可执行词表内；
+30B-A3B-Thinking 90/104 选择同一干预 padding, 坍缩亦见于处方侧）。
 frontier 模型与 agentic 取证能否扭转 F1/F2 是本基准的开放问题。[LLM\_SCALE\_TABLE]
 
-\textbf{范围与局限}：本节结论的范围是\emph{冻结参数、非推理型、单轮打包}
-的 LLM（Qwen3 家族 4B/8B/32B）。三点须知：(i) 4B/8B 经 Ollama 端点、
+\textbf{范围与局限}：本节结论的范围是\emph{冻结参数、单轮打包}的本地
+LLM（Qwen3 家族 4B/8B/32B 及 30B-A3B-Thinking 推理档）。三点须知：(i) 4B/8B 经 Ollama 端点、
 思考链无法关闭（推理烧 3--5k token 后仍提取出最终答案）；32B 经 vLLM
 以 \texttt{enable\_thinking=false} 关闭思考链——规模轴上存在这一服务栈
 差异，解释 32B easy 档相对 8B 的非单调回升时应计入；(ii) 全部为单轮
@@ -282,7 +288,8 @@ starvation\_livelock 与 blocking\_livelock 从归因词表抽走, Qwen3-32B
 本文定义了引擎接地的调度诊断任务（双字段定位/归因/证据/干预 + 三层判分 +
 反事实验证），交付 Generator--Executor--Verifier 式基准 cases\_v2
 （104 案例，核验闭环拦截 26 缺陷场景）与首个 easy/hard 塌陷基线。
-LLM 全量评测、agentic 工具层与反事实执行器为下一步；
+四档 LLM（含推理档）全量评测、反事实执行器与 unseen 留出已完成；
+agentic 工具层、KPI 时序统计基线与 frontier 行为下一步；
 训练阶梯（反思精化、反事实 DPO）以本框架的可验证奖励为基础。
 代码与数据见 \texttt{sky\_research} 分支 \texttt{0901llmdiag}。
 
