@@ -8,7 +8,7 @@
 
 \title{引擎接地的调度诊断解释层：LLM 在 FJSP+MAPF 耦合系统中的\\定位、归因、可回查证据与可仿真干预}
 \author{SkyResearch}
-\date{2026年9月4日 \quad v2.1 草稿（v2 数据集 + 规则塌陷 + 4B 全量五发现；agentic 与 frontier 待补）}
+\date{2026年9月6日 \quad v2.2 草稿（三档模型主表 + hard 视图质检 + CF--INT 差距 + 反事实执行 + unseen 留出首档；agentic 与 frontier 待补）}
 
 \begin{document}
 \maketitle
@@ -162,12 +162,18 @@ easy 含事件流（考阅读），hard 删除事件流只留统计特征（考�
 \midrule
 easy（含事件流） & 0.596 & 0.596 & 0.596 & 1.00\\
 hard（无事件流） & 0.413 & 0.481 & 0.346 & 1.00\\
+首异常（easy） & 0.462 & 0.462 & 0.462 & 0.31\\
+首异常（hard） & 0.327 & 0.327 & 0.327 & 0.00\\
 \bottomrule
 \end{tabular}
-\caption{规则基线的 easy/hard 塌陷。对比 v1 试点``95\%/97.5\%''的虚胖
-（答案位于事件字段首行、故障目标恒为 0 号机），随机化与无事件耦合失效
-构成实质难度。LLM（Qwen3-4B 本地端点）冒烟 6 案例 loc/JRA 全对，
-全量 104 案例与接地约束 A/B 进行中。}\label{tab:rule}
+\caption{规则基线与首异常启发式（G1.2 strawman）的 easy/hard 对照。
+对比 v1 试点``95\%/97.5\%''的虚胖（答案位于事件字段首行、故障目标恒为
+0 号机），随机化与无事件耦合失效构成实质难度。首异常启发式取最早事件
+实体作答：easy 档即低于规则（``首个异常 $\neq$ 根因''：涌现类无事件可考、
+随机扰动类归因缺位）；计划注入主事件之外的诱饵事件时间陷阱率为 0/12
+（H5 预注册的诚实负结果）；hard 档无事件流时全盲，塌陷至 0.327。
+规则基线方向由一次独立实现交叉验证（另一代码线 24 案例 greedy 单臂
+试点 easy$\to$hard 定位 0.812$\to$0.625, 与主表同向）。}\label{tab:rule}
 \end{table}
 
 塌陷幅度的含义：规则只能回答预埋的签名，无事件耦合失效上目标不可知
@@ -212,6 +218,52 @@ Ollama 本地端点，32B 经 vLLM（4$\times$RTX 3090, TP=4, enforce-eager）�
 （2 例）。
 干预药房约束三档模型均 100\% 合规（104 案例全部落在引擎可执行词表内）。
 frontier 模型与 agentic 取证能否扭转 F1/F2 是本基准的开放问题。[LLM\_SCALE\_TABLE]
+
+\subsection{CF--INT：塌陷的信息归因}\label{sec:cfint}
+
+为区分 hard 档塌陷是``信息不足''还是``溯因无能'', 为 16 个注入场景生成
+INT 视图（hard + \textbf{公开注入参数}, 即 v0.2 防线3 的兜底归因）。
+Qwen3-32B 在 INT 档整体 JRA 回升至 0.75（hard: 0.000）, 分解如下：
+
+\begin{table}[h]\centering\small
+\begin{tabular}{lccc}
+\toprule
+归因类 & hard JRA & INT JRA & 差距\\
+\midrule
+disruption\_machine & 0.5 & 1.0 & +0.5\\
+disruption\_machine\_agv & 0.1 & 1.0 & +0.9\\
+disruption\_stochastic & 0.0 & 0.0 & 0\\
+\bottomrule
+\end{tabular}
+\caption{CF--INT 差距（Qwen3-32B, 注入类）。}\label{tab:cfint}
+\end{table}
+
+两点结论：(i) 防线2 标记的混淆对（machine\_agv $\times$ stochastic, hard
+视图标记轮廓重合 1.0）被公开注入参数\textbf{完全消解}（0.1$\to$1.0）——
+塌陷是\textbf{信息不对称}而非模型无能, 与 F2/F3 共同构成``观测形态决定
+诊断上界''的证据链；(ii) preset 型故障（stochastic）INT 仍为 0——其公开
+参数只有 preset 名与种子, 无具体时刻/目标可公开, INT 消歧对概率型故障
+天然失效（该类需要公开注入事件时间戳, 留作 v2.2）。
+
+\subsection{反事实执行与 unseen 留出}\label{sec:cfb}
+
+\textbf{反事实执行器}（药房词表 $\to$ 配置增量 $\to$ 同 seed 重仿真 $\to$
+$\Delta$KPI, 对齐 CRN 孪生的应恢复量）在规则臂 9 例上：6 例有效
+（成功率 0.667; 最佳 padding/fleet $\Delta$KPI +99/+375）, 1 例有害
+（$\Delta$KPI $-67$）——``无效干预率''开始区分``敢开方''与``开对方''。
+同 seed 重仿真本身获得\textbf{逐位复现}实证（重跑 makespan 与入库值一致）,
+CRN 判分的确定性假设成立。
+
+\textbf{unseen 留出}（leave-one-class-out, Patch B）：先后把
+starvation\_livelock 与 blocking\_livelock 从归因词表抽走, Qwen3-32B
+两档轮换完全一致——诚实率 \textbf{0.0}、沉默失败率 \textbf{1.0}、
+假阳性率 \textbf{0.0}：模型从不使用 unseen 逃生舱承认不认识（词表坍缩
+支配一切）, 但也不滥用逃生舱。其余类别轮换与干预有效性维度进行中。
+
+\textbf{测量有效性}：开发过程曾因 ground\_truth 随档案整体进入 prompt
+而得到 100\% 的虚假满分（该全量结果作废留档）。此后诊断器只允许经
+\texttt{model\_view()} 白名单取档案本体, 并确立纪律：\emph{异常好的分数
+先疑测量、再疑模型}。该事故与处置作为基准工程的一部分一并公开。
 
 \section{结论}
 
