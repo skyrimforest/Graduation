@@ -13,7 +13,7 @@
 \begin{document}
 \maketitle
 \begin{center}\it\small
-Can LLMs Explain Scheduling Failures?\\
+When Do LLMs Fail at Engine-Grounded Scheduling Diagnosis?\\
 Engine-Grounded Diagnosis with Executable Counterfactual Verification
 \end{center}
 
@@ -31,7 +31,9 @@ CRN 无故障孪生对照 + 涌现失效配方 + Generator--Executor--Verifier �
 定位准确率 $59.6\%\to41.3\%$、JRA $59.6\%\to34.6\%$ 的塌陷证实了基准的区分力：
 无事件耦合失效（活锁/拥塞）构成对 LLM 泛化推断能力的受控测试。
 与 LLM-CO（HeurAgenix、CO-Bench 的生成侧）与在线决策（ReflecSched）不同，
-本层是\emph{事后诊断}且\emph{可被引擎证伪}。
+本层是\emph{事后诊断}且\emph{可被引擎证伪}。本文结论限于冻结参数、
+非 agentic、单轮打包设定下的本地模型（Qwen3-4B/8B/32B）；frontier、
+reasoning 与主动取证模型上的表现为开放问题。
 \end{abstract}
 
 \section{引言}
@@ -218,6 +220,16 @@ Ollama 本地端点，32B 经 vLLM（4$\times$RTX 3090, TP=4, enforce-eager）�
 （2 例）。
 干预药房约束三档模型均 100\% 合规（104 案例全部落在引擎可执行词表内）。
 frontier 模型与 agentic 取证能否扭转 F1/F2 是本基准的开放问题。[LLM\_SCALE\_TABLE]
+
+\textbf{范围与局限}：本节结论的范围是\emph{冻结参数、非推理型、单轮打包}
+的 LLM（Qwen3 家族 4B/8B/32B）。三点须知：(i) 4B/8B 经 Ollama 端点、
+思考链无法关闭（推理烧 3--5k token 后仍提取出最终答案）；32B 经 vLLM
+以 \texttt{enable\_thinking=false} 关闭思考链——规模轴上存在这一服务栈
+差异，解释 32B easy 档相对 8B 的非单调回升时应计入；(ii) 全部为单轮
+打包诊断（整个档案一次给出），非 agentic 主动取证；(iii) 据此，本文
+标题采取``When Do LLMs Fail''的\emph{条件式}发问而非``LLM 不能诊断''
+的全称否定——frozen 小/中模型在本基准上的失败已实测，reasoning 与
+agentic 是否翻案待 §\ref{sec:cfb} 的工具层与 frontier 行回答。
 
 \subsection{CF--INT：塌陷的信息归因}\label{sec:cfint}
 
