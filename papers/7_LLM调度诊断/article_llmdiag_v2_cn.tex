@@ -270,7 +270,7 @@ $\Delta$KPI, 对齐 CRN 孪生的应恢复量）在规则臂 9 例上：6 例有
 （成功率 0.667; 最佳 padding/fleet $\Delta$KPI +99/+375）, 1 例有害
 （$\Delta$KPI $-67$）——``无效干预率''开始区分``敢开方''与``开对方''。
 同 seed 重仿真本身获得\textbf{逐位复现}实证（重跑 makespan 与入库值一致）,
-CRN 判分的确定性假设成立。
+CRN 判分的确定性假设成立。LLM 臂（32B 与 30B-A3B-Thinking, n=133 重仿真）干预成功率 0.31--0.32（规则臂 0.667）; greedy/涌现臂近乎全灭（0--7%）——药房缺治疗涌现失效的旋钮; 且 padding 在脆弱配置上出现 ΔKPI $-3585$ 的灾难性伤害——干预评估层捕获了纯文本评分不可能发现的``治疗副作用''。
 
 \textbf{unseen 留出}（leave-one-class-out, Patch B）：先后把
 starvation\_livelock 与 blocking\_livelock 从归因词表抽走, Qwen3-32B
